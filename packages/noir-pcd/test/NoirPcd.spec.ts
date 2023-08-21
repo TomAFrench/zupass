@@ -1,8 +1,8 @@
 /* eslint-disable @typescript-eslint/no-non-null-assertion */
 import { ArgumentTypeName } from "@pcd/pcd-types";
 import {
-    SemaphoreIdentityPCDPackage,
-    SemaphoreIdentityPCDTypeName,
+  SemaphoreIdentityPCDPackage,
+  SemaphoreIdentityPCDTypeName,
 } from "@pcd/semaphore-identity-pcd";
 import { Identity } from "@semaphore-protocol/identity";
 import assert from "assert";
@@ -49,5 +49,4 @@ describe("Noir PCD", function () {
 
     assert(await NoirPCDPackage.verify(ethereumPCD));
   });
-
 });
