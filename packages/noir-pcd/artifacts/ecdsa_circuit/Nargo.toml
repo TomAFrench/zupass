@@ -1,0 +1,7 @@
+[package]
+name = "ecdsa_circuit"
+type = "bin"
+authors = [""]
+compiler_version = "0.10.2"
+
+[dependencies]
