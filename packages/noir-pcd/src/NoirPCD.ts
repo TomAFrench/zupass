@@ -129,8 +129,6 @@ export async function prove(args: NoirPCDArgs): Promise<NoirPCD> {
     false
   );
 
-  console.log("here");
-
   const semaphoreSignature = await SemaphoreSignaturePCDPackage.prove({
     identity: {
       argumentType: ArgumentTypeName.PCD,
@@ -142,8 +140,6 @@ export async function prove(args: NoirPCDArgs): Promise<NoirPCD> {
       value: proof.toString()
     }
   });
-
-  console.log("here");
 
   return new NoirPCD(
     uuid(),
