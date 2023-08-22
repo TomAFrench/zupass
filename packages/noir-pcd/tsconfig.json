@@ -1,5 +1,9 @@
 {
+  "$schema": "https://json.schemastore.org/tsconfig",
   "extends": "@pcd/tsconfig/ts-library.json",
   "include": [".", "./test"],
-  "exclude": ["dist", "build", "node_modules"]
+  "exclude": ["dist", "build", "node_modules"],
+  "ts-node": {
+    "esm": true // «———— enabling ESM for ts-node
+  }
 }

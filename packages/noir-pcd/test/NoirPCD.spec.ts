@@ -2,30 +2,38 @@
 import { ArgumentTypeName } from "@pcd/pcd-types";
 import {
   SemaphoreIdentityPCDPackage,
-  SemaphoreIdentityPCDTypeName,
+  SemaphoreIdentityPCDTypeName
 } from "@pcd/semaphore-identity-pcd";
 import { Identity } from "@semaphore-protocol/identity";
 import assert from "assert";
-import "mocha";
 import * as path from "path";
+import "mocha";
 import { NoirPCDPackage } from "../src/NoirPCD";
 
-const circuitPath: string = path.join(__dirname, "../artifacts/ecdsa_circuit/target/ecdsa_circuit.json");
-const proverWitnessPath: string = path.join(__dirname, "../artifacts/ecdsa_circuit/Prover.toml");
+const circuitPath = path.join(
+  __dirname,
+  "../artifacts/ecdsa_circuit/target/ecdsa_circuit.json"
+);
+const proverWitnessPath = path.join(
+  __dirname,
+  "../artifacts/ecdsa_circuit/target/witness.tr"
+);
+const zkeyFilePath = path.join(__dirname, "../artifacts/16.zkey");
+const wasmFilePath = path.join(__dirname, "../artifacts/16.wasm");
 
 describe("Noir PCD", function () {
-  this.timeout(30 * 1000);
-
-  this.beforeAll(async function () {
-    await NoirPCDPackage.init!({
-        circuitPath,
-        proverWitnessPath,
+  beforeAll(async function () {
+    await NoirPCDPackage.init?.({
+      zkeyFilePath,
+      wasmFilePath,
+      circuitPath,
+      proverWitnessPath
     });
   });
 
-  it("noir proof test", async function () {
+  it("should generate correct proof", async function () {
     const identity = await SemaphoreIdentityPCDPackage.prove({
-      identity: new Identity(),
+      identity: new Identity()
     });
     const serializedIdentity = await SemaphoreIdentityPCDPackage.serialize(
       identity
@@ -34,17 +42,17 @@ describe("Noir PCD", function () {
     const ethereumPCD = await NoirPCDPackage.prove({
       circuitPath: {
         argumentType: ArgumentTypeName.String,
-        value: circuitPath,
+        value: circuitPath
       },
       proverWitnessPath: {
         argumentType: ArgumentTypeName.String,
-        value: proverWitnessPath,
+        value: proverWitnessPath
       },
       identity: {
         argumentType: ArgumentTypeName.PCD,
         pcdType: SemaphoreIdentityPCDTypeName,
-        value: serializedIdentity,
-      },
+        value: serializedIdentity
+      }
     });
 
     assert(await NoirPCDPackage.verify(ethereumPCD));

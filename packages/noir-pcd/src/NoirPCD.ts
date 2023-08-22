@@ -31,6 +31,8 @@ import { NoirCardBody } from "./CardBody";
 export const NoirPCDTypeName = "noir-pcd";
 
 export interface NoirPCDInitArgs {
+  zkeyFilePath: string;
+  wasmFilePath: string;
   circuitPath: string;
   proverWitnessPath: string;
 }
@@ -56,11 +58,7 @@ export class NoirPCD implements PCD<NoirPCDClaim, NoirPCDProof> {
   proof: NoirPCDProof;
   id: string;
 
-  public constructor(
-    id: string,
-    claim: NoirPCDClaim,
-    proof: NoirPCDProof
-  ) {
+  public constructor(id: string, claim: NoirPCDClaim, proof: NoirPCDProof) {
     this.id = id;
     this.claim = claim;
     this.proof = proof;
@@ -74,6 +72,7 @@ interface CircuitParams {
 }
 let initParams: CircuitParams | undefined = undefined;
 export async function init(args: NoirPCDInitArgs): Promise<void> {
+  SemaphoreSignaturePCDPackage.init?.(args);
   const circuitDecompressed = getBytecode(args.circuitPath);
   const api = await newBarretenbergApiAsync();
 
@@ -93,7 +92,8 @@ export async function init(args: NoirPCDInitArgs): Promise<void> {
 
 function getBytecode(bytecodePath: string) {
   const encodedCircuit = readFileSync(bytecodePath, "utf-8");
-  const buffer = Buffer.from(encodedCircuit, "base64");
+  const jsonCircuit = JSON.parse(encodedCircuit);
+  const buffer = Buffer.from(jsonCircuit.bytecode, "base64");
   const decompressed = gunzipSync(buffer);
   return decompressed;
 }
@@ -129,6 +129,8 @@ export async function prove(args: NoirPCDArgs): Promise<NoirPCD> {
     false
   );
 
+  console.log("here");
+
   const semaphoreSignature = await SemaphoreSignaturePCDPackage.prove({
     identity: {
       argumentType: ArgumentTypeName.PCD,
@@ -140,6 +142,8 @@ export async function prove(args: NoirPCDArgs): Promise<NoirPCD> {
       value: proof.toString()
     }
   });
+
+  console.log("here");
 
   return new NoirPCD(
     uuid(),
@@ -187,9 +191,7 @@ export async function verify(pcd: NoirPCD): Promise<boolean> {
   return verified;
 }
 
-export async function serialize(
-  pcd: NoirPCD
-): Promise<SerializedPCD<NoirPCD>> {
+export async function serialize(pcd: NoirPCD): Promise<SerializedPCD<NoirPCD>> {
   return {
     type: NoirPCDTypeName,
     pcd: JSONBig().stringify(pcd)
