@@ -1,50 +1,56 @@
-import { useCallback, useState } from "react";
-import { appConfig } from "../../src/appConfig";
-import { useDispatch, useSyncKey } from "../../src/appHooks";
+import { useCallback } from "react";
+import { useDispatch, useHasSetupPassword, useSelf } from "../../src/appHooks";
 import { Button, CenterColumn, Spacer, TextCenter } from "../core";
 import { LinkButton } from "../core/Button";
 import { icons } from "../icons";
 
-export function SettingsModal() {
-  const [justCopied, setJustCopied] = useState(false);
+export function SettingsModal({
+  isProveOrAddScreen
+}: {
+  isProveOrAddScreen: boolean;
+}) {
   const dispatch = useDispatch();
-  const syncKey = useSyncKey();
+  const self = useSelf();
+  const hasSetupPassword = useHasSetupPassword();
 
-  const copySyncKey = useCallback(async () => {
-    // Use the window clipboard API to copy the key
-    await window.navigator.clipboard.writeText(syncKey);
-    setJustCopied(true);
-    setTimeout(() => setJustCopied(false), 2000);
-  }, [syncKey]);
+  const close = useCallback(() => {
+    dispatch({ type: "set-modal", modal: { modalType: "none" } });
+  }, [dispatch]);
 
-  const clearPassport = useCallback(() => {
-    if (
-      window.confirm(
-        "Are you sure you want to clear your passport? This will delete your passport data."
-      )
-    ) {
+  const clearZupass = useCallback(() => {
+    if (window.confirm("Are you sure you want to log out?")) {
       dispatch({ type: "reset-passport" });
     }
   }, [dispatch]);
 
   return (
     <>
-      <Spacer h={32} />
       <TextCenter>
-        <img src={icons.settingsPrimary} width={34} height={34} />
+        <img
+          draggable="false"
+          src={icons.settingsPrimary}
+          width={34}
+          height={34}
+        />
       </TextCenter>
-      <Spacer h={32} />
-      <CenterColumn w={280}>
-        <LinkButton to="/scan">
-          {appConfig.isZuzalu ? "Verify a Passport" : "Scan Ticket"}
-        </LinkButton>
+      <Spacer h={24} />
+      <CenterColumn>
+        <TextCenter>{self.email}</TextCenter>
         <Spacer h={16} />
-        <Button onClick={copySyncKey}>
-          {justCopied ? "Copied" : "Copy Key for Sync"}
-        </Button>
-        <Spacer h={16} />
-        <Button onClick={clearPassport} style="danger">
-          Clear Passport
+        {!isProveOrAddScreen && (
+          <>
+            <LinkButton $primary={true} to="/scan">
+              Scan Ticket
+            </LinkButton>
+            <Spacer h={16} />
+            <LinkButton $primary={true} to="/change-password" onClick={close}>
+              {hasSetupPassword ? "Change" : "Add"} Password
+            </LinkButton>
+            <Spacer h={16} />
+          </>
+        )}
+        <Button onClick={clearZupass} style="danger">
+          Log Out
         </Button>
       </CenterColumn>
     </>

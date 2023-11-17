@@ -1,4 +1,5 @@
 import { DisplayOptions, PCD, PCDPackage, SerializedPCD } from "@pcd/pcd-types";
+import { requireDefinedParameter } from "@pcd/util";
 import { Identity } from "@semaphore-protocol/identity";
 import JSONBig from "json-bigint";
 import { v4 as uuid } from "uuid";
@@ -6,9 +7,9 @@ import { SemaphoreIdentityCardBody } from "./CardBody";
 
 export const SemaphoreIdentityPCDTypeName = "semaphore-identity-pcd";
 
-export interface SemaphoreIdentityPCDArgs {
+export type SemaphoreIdentityPCDArgs = {
   identity: Identity;
-}
+};
 
 export interface SemaphoreIdentityPCDClaim {
   identity: Identity;
@@ -49,17 +50,21 @@ export async function serialize(
     pcd: JSONBig.stringify({
       type: pcd.type,
       id: pcd.id,
-      identity: pcd.claim.identity.toString(),
-    }),
+      identity: pcd.claim.identity.toString()
+    })
   } as SerializedPCD<SemaphoreIdentityPCD>;
 }
 
 export async function deserialize(
   serialized: string
 ): Promise<SemaphoreIdentityPCD> {
-  const parsed = JSONBig.parse(serialized);
-  return new SemaphoreIdentityPCD(parsed.id, {
-    identity: new Identity(parsed.identity),
+  const { id, identity } = JSONBig.parse(serialized);
+
+  requireDefinedParameter(id, "id");
+  requireDefinedParameter(identity, "identity");
+
+  return new SemaphoreIdentityPCD(id, {
+    identity: new Identity(identity)
   });
 }
 
@@ -67,8 +72,7 @@ export function getDisplayOptions(pcd: SemaphoreIdentityPCD): DisplayOptions {
   return {
     header: "Semaphore Identity",
     displayName:
-      "semaphore-id-" +
-      pcd.claim.identity.commitment.toString().substring(0, 8),
+      "semaphore-id-" + pcd.claim.identity.commitment.toString().substring(0, 8)
   };
 }
 
@@ -79,6 +83,7 @@ export function getDisplayOptions(pcd: SemaphoreIdentityPCD): DisplayOptions {
 export const SemaphoreIdentityPCDPackage: PCDPackage<
   SemaphoreIdentityPCDClaim,
   SemaphoreIdentityPCDProof,
+  // @ts-expect-error https://github.com/proofcarryingdata/zupass/issues/830
   SemaphoreIdentityPCDArgs
 > = {
   name: SemaphoreIdentityPCDTypeName,
@@ -87,5 +92,5 @@ export const SemaphoreIdentityPCDPackage: PCDPackage<
   prove,
   verify,
   serialize,
-  deserialize,
+  deserialize
 };

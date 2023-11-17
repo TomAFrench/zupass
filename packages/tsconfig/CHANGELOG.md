@@ -1,5 +1,35 @@
 # @pcd/tsconfig
 
+## 0.8.0
+
+### Minor Changes
+
+- new package versions
+
+## 0.7.2
+
+### Patch Changes
+
+- publish new versions of packages
+
+## 0.7.1
+
+### Patch Changes
+
+- new package versions.
+
+## 0.7.0
+
+### Minor Changes
+
+- bundle of package upgrades
+
+## 0.6.2
+
+### Patch Changes
+
+- eddsa pcds
+
 ## 0.6.1
 
 ### Patch Changes

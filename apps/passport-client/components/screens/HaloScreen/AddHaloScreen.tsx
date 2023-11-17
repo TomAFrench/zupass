@@ -9,10 +9,13 @@ import { useLocation } from "react-router-dom";
 import styled from "styled-components";
 import {
   useDispatch,
-  useIsDownloaded,
-  useIsLoggedIn
+  useIsLoggedIn,
+  useIsSyncSettled
 } from "../../../src/appHooks";
-import { useHasUploaded } from "../../../src/useSyncE2EEStorage";
+import {
+  clearAllPendingRequests,
+  setPendingHaloRequest
+} from "../../../src/sessionStorage";
 import { err } from "../../../src/util";
 import { Button, Spacer, TextCenter } from "../../core";
 import { MaybeModal } from "../../modals/Modal";
@@ -36,8 +39,7 @@ export function AddHaloScreen({
   const [pcd, setPCD] = useState<HaLoNoncePCD | undefined>(undefined);
   const [invalidPCD, setInvalidPCD] = useState(false);
   const loggedIn = useIsLoggedIn();
-  const hasUploaded = useHasUploaded();
-  const isDownloaded = useIsDownloaded();
+  const syncSettled = useIsSyncSettled();
 
   useEffect(() => {
     const generatePCD = async () => {
@@ -84,10 +86,9 @@ export function AddHaloScreen({
   }, [dispatch, pcd]);
 
   const onLoginClick = () => {
-    console.log(location.search);
-    sessionStorage.pendingHaloRequest = location.search;
-    window.location.href = "/#/login";
-    window.location.reload();
+    clearAllPendingRequests();
+    setPendingHaloRequest(location.search);
+    window.location.href = "/#/login?redirectedFromAction=true";
   };
 
   let content: ReactNode;
@@ -107,7 +108,7 @@ export function AddHaloScreen({
           <Spacer h={16} />
           <TextCenter>
             <p>
-              To add this stamp, login to your passport or copy this link into a
+              To add this stamp, login to your Zupass or copy this link into a
               logged in device.
             </p>
           </TextCenter>
@@ -116,7 +117,7 @@ export function AddHaloScreen({
         </Container>
       </AppContainer>
     );
-  } else if (!isDownloaded) {
+  } else if (!syncSettled) {
     return <SyncingPCDs />;
   } else if (!added) {
     content = (
@@ -127,8 +128,6 @@ export function AddHaloScreen({
         <Button onClick={onAddClick}>Add</Button>
       </>
     );
-  } else if (!hasUploaded) {
-    return <SyncingPCDs />;
   } else {
     sessionStorage.newAddedPCDID = pcd.id;
     window.location.href = "/#/";

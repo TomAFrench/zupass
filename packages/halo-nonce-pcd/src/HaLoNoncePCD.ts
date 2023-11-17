@@ -3,8 +3,9 @@ import {
   PCD,
   PCDPackage,
   SerializedPCD,
-  StringArgument,
+  StringArgument
 } from "@pcd/pcd-types";
+import { requireDefinedParameter } from "@pcd/util";
 import { ec } from "elliptic";
 import { sha256 } from "js-sha256";
 import { v4 as uuid } from "uuid";
@@ -16,7 +17,7 @@ export const HaLoNoncePCDTypeName = "halo-nonce-pcd";
 
 // Arguments taken from the URL produced by the HaLo tags, the definition is at
 // https://github.com/arx-research/libhalo/blob/master/docs/halo-command-set.md#command-sign_random
-export interface HaLoNoncePCDArgs {
+export type HaLoNoncePCDArgs = {
   /**
    * The uncompressed hex string of the signing public key
    */
@@ -31,7 +32,7 @@ export interface HaLoNoncePCDArgs {
    * The signature of the nonce + random string
    */
   rndsig: StringArgument;
-}
+};
 
 export interface HaLoNoncePCDClaim {
   /**
@@ -85,7 +86,7 @@ export async function prove(args: HaLoNoncePCDArgs): Promise<HaLoNoncePCD> {
 
   const claim: HaLoNoncePCDClaim = {
     nonce: parseInt(args.rnd.value.substring(0, 8), 16),
-    pubkeyHex: args.pk2.value,
+    pubkeyHex: args.pk2.value
   };
 
   if (isNaN(claim.nonce)) {
@@ -107,7 +108,7 @@ export async function prove(args: HaLoNoncePCDArgs): Promise<HaLoNoncePCD> {
 
   const proof: HaLoNoncePCDProof = {
     signedDigest: args.rnd.value,
-    cleanedSignature: cutSig,
+    cleanedSignature: cutSig
   };
 
   return new HaLoNoncePCD(uuid(), claim, proof);
@@ -128,7 +129,7 @@ export async function verify(pcd: HaLoNoncePCD): Promise<boolean> {
     .update(
       Buffer.concat([
         Buffer.from([0x19]),
-        Buffer.from("Attest counter pk2:\n", "utf8"),
+        Buffer.from("Attest counter pk2:\n", "utf8")
       ])
     )
     .update(rndBuf)
@@ -149,17 +150,23 @@ export async function serialize(
 ): Promise<SerializedPCD<HaLoNoncePCD>> {
   return {
     type: HaLoNoncePCDTypeName,
-    pcd: JSON.stringify(pcd),
+    pcd: JSON.stringify(pcd)
   } as SerializedPCD<HaLoNoncePCD>;
 }
 
 export async function deserialize(serialized: string): Promise<HaLoNoncePCD> {
-  return JSON.parse(serialized);
+  const { id, claim, proof } = JSON.parse(serialized);
+
+  requireDefinedParameter(id, "id");
+  requireDefinedParameter(claim, "claim");
+  requireDefinedParameter(proof, "proof");
+
+  return new HaLoNoncePCD(id, claim, proof);
 }
 
 export function getDisplayOptions(pcd: HaLoNoncePCD): DisplayOptions {
   return {
-    displayName: "halo-nonce-" + pcd.id.substring(0, 4),
+    displayName: "halo-nonce-" + pcd.id.substring(0, 4)
   };
 }
 
@@ -181,5 +188,5 @@ export const HaLoNoncePCDPackage: PCDPackage<
   prove,
   verify,
   serialize,
-  deserialize,
+  deserialize
 };

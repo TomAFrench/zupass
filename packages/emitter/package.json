@@ -1,13 +1,14 @@
 {
   "name": "@pcd/emitter",
-  "version": "0.0.2",
+  "version": "0.2.0",
   "license": "MIT",
   "main": "./dist/index.js",
   "types": "./src/index.ts",
   "files": [
     "./src/*",
     "./dist/*",
-    "./README.md"
+    "./README.md",
+    "./LICENSE"
   ],
   "scripts": {
     "lint": "eslint \"**/*.ts{,x}\"",
@@ -15,7 +16,8 @@
     "dev": "tsup src/index.ts --watch",
     "typecheck": "yarn tsc --noEmit",
     "prepublishOnly": "yarn build",
-    "test": "ts-mocha --config ../../.mocharc.js --exit test/**/*.spec.ts"
+    "test": "ts-mocha --config ../../.mocharc.js --exit test/**/*.spec.ts",
+    "clean": "rm -rf dist node_modules"
   },
   "dependencies": {
     "chai": "^4.3.7"
@@ -25,7 +27,6 @@
     "@pcd/tsconfig": "*",
     "@types/chai": "^4.3.5",
     "@types/mocha": "^10.0.1",
-    "@types/uuid": "^9.0.2",
     "chai-spies": "^1.0.0",
     "eslint": "^7.32.0",
     "mocha": "^10.2.0",

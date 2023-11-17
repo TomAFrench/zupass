@@ -1,22 +1,14 @@
 import { useEffect, useState } from "react";
+import { requestUser } from "./api/requestUser";
 import { User } from "./zuzalu";
 
-export async function fetchUser(
-  passportServerUrl: string,
-  uuid: string
-): Promise<User | null> {
-  // TODO: use consistent environment variables.
-  const base = passportServerUrl + (passportServerUrl.endsWith("/") ? "" : "/");
-  const url = base + "zuzalu/participant/" + uuid;
-  console.log(`Fetching ${url}`);
-  const res = await fetch(url);
-  if (!res.ok) return null;
-  return (await res.json()) as User;
-}
-
-export function useFetchUser(passportServerUrl: string, uuid?: string) {
+export function useFetchUser(
+  zupassServerUrl: string,
+  isZuzalu: boolean,
+  uuid?: string
+) {
   const [user, setUser] = useState<User | null>(null);
-  const [error, setError] = useState<Error | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -28,19 +20,23 @@ export function useFetchUser(passportServerUrl: string, uuid?: string) {
         return;
       }
 
-      try {
-        setLoading(true);
-        const user = await fetchUser(passportServerUrl, uuid);
-        setUser(user);
-      } catch (e) {
-        setError(e as Error);
-      } finally {
-        setLoading(false);
+      setLoading(true);
+      const userResult = await requestUser(zupassServerUrl, uuid);
+      setLoading(false);
+
+      if (userResult.success) {
+        setUser(userResult.value);
+      } else {
+        if (userResult.error.userMissing) {
+          setError(`no user with id '${uuid}'`);
+        } else {
+          setError(userResult.error.errorMessage);
+        }
       }
     };
 
     doLoad();
-  }, [passportServerUrl, uuid]);
+  }, [isZuzalu, zupassServerUrl, uuid]);
 
   return { user, error, loading };
 }

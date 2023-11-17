@@ -1,106 +1,91 @@
 import {
   isSettledPendingPCDStatus,
-  PendingPCD,
-  ProveRequest,
-  StatusRequest,
-  StatusResponse,
+  ProofStatusRequest,
+  ProveOnServerResult,
+  requestProveOnServer,
+  requestServerProofStatus,
+  ServerProofRequest,
+  ServerProofStatusResult
 } from "@pcd/passport-interface";
-import chai, { expect } from "chai";
-import { Response } from "superagent";
-import { PCDPass } from "../../src/types";
-import { sleep } from "../../src/util/util";
+import { sleep } from "@pcd/util";
+import { expect } from "chai";
+import { Zupass } from "../../src/types";
 
 export async function sendProveRequest(
-  application: PCDPass,
-  proveRequest: ProveRequest,
-  handler: (r: Response) => Promise<void>
-): Promise<Response> {
-  return new Promise((resolve, reject) => {
-    const { expressContext } = application;
+  application: Zupass,
+  proveRequest: ServerProofRequest,
+  handler: (r: ProveOnServerResult) => Promise<void>
+): Promise<ProveOnServerResult> {
+  const res = await requestProveOnServer(
+    application.expressContext.localEndpoint,
+    proveRequest
+  );
 
-    chai
-      .request(expressContext.app)
-      .post("/pcds/prove")
-      .send(proveRequest)
-      .then(async (r) => {
-        try {
-          await handler(r);
-          resolve(r);
-        } catch (e) {
-          reject(e);
-        }
-      });
-  });
+  await handler(res);
+
+  return res;
 }
 
 export async function sendStatusRequest(
-  application: PCDPass,
-  statusRequest: StatusRequest,
-  handler?: (r: Response) => Promise<void>
-): Promise<Response> {
-  return new Promise((resolve, reject) => {
-    const { expressContext } = application;
-
-    chai
-      .request(expressContext.app)
-      .post("/pcds/status")
-      .send(statusRequest)
-      .then(async (r) => {
-        try {
-          await (handler && handler(r));
-          resolve(r);
-        } catch (e) {
-          reject(e);
-        }
-      });
-  });
-}
-
-export async function waitForSettledStatus(
-  application: PCDPass,
-  statusRequest: StatusRequest,
-  handler?: (r: Response) => Promise<void>
-): Promise<Response> {
-  let response = await sendStatusRequest(application, statusRequest);
-  let responseBody = response.body as StatusResponse;
-
-  while (!isSettledPendingPCDStatus(responseBody.status)) {
-    await sleep(500);
-    response = await sendStatusRequest(application, statusRequest);
-    responseBody = response.body as StatusResponse;
-  }
-
-  await (handler && handler(response));
-  return response;
-}
-
-export async function submitAndWaitForPendingPCD(
-  application: PCDPass,
-  proveRequest: ProveRequest,
-  settledResponseHandler: (status: Response) => Promise<void>
-): Promise<void> {
-  const proveResponse = await sendProveRequest(
-    application,
-    proveRequest,
-    async (r) => {
-      const response = r.body as PendingPCD;
-      expect(response).to.haveOwnProperty("pcdType");
-      expect(response).to.haveOwnProperty("hash");
-      expect(response).to.haveOwnProperty("status");
-      expect(r.statusCode).to.eq(200);
-    }
-  );
-
-  const statusRequest: StatusRequest = {
-    hash: proveResponse.body.hash,
-  };
-
-  const settledStatusResponse = await waitForSettledStatus(
-    application,
+  application: Zupass,
+  statusRequest: ProofStatusRequest,
+  handler?: (r: ServerProofStatusResult) => Promise<void>
+): Promise<ServerProofStatusResult> {
+  const proofStatusResult = await requestServerProofStatus(
+    application.expressContext.localEndpoint,
     statusRequest
   );
 
-  const settledResponseBody = settledStatusResponse.body as StatusResponse;
-  expect(settledResponseBody).to.haveOwnProperty("status");
-  await settledResponseHandler(settledStatusResponse);
+  handler && (await handler(proofStatusResult));
+
+  return proofStatusResult;
+}
+
+export async function waitForSettledStatus(
+  application: Zupass,
+  statusRequest: ProofStatusRequest,
+  handler?: (r: ServerProofStatusResult) => Promise<void>
+): Promise<ServerProofStatusResult> {
+  let statusResult = await sendStatusRequest(application, statusRequest);
+
+  while (
+    statusResult.value?.status &&
+    !isSettledPendingPCDStatus(statusResult.value?.status)
+  ) {
+    await sleep(500);
+    statusResult = await sendStatusRequest(application, statusRequest);
+  }
+
+  await (handler && handler(statusResult));
+  return statusResult;
+}
+
+export async function submitAndWaitForPendingPCD(
+  application: Zupass,
+  proveRequest: ServerProofRequest,
+  settledResponseHandler: (status: ServerProofStatusResult) => Promise<void>
+): Promise<void> {
+  const proveResult = await sendProveRequest(
+    application,
+    proveRequest,
+    async (r) => {
+      expect(r.value).to.haveOwnProperty("pcdType");
+      expect(r.value).to.haveOwnProperty("hash");
+      expect(r.value).to.haveOwnProperty("status");
+      expect(r.error).to.eq(undefined);
+      expect(r.success).to.eq(true);
+    }
+  );
+
+  if (!proveResult.value) {
+    throw new Error("expected to be able to get a proof result");
+  }
+
+  const settledStatusResult = await waitForSettledStatus(application, {
+    hash: proveResult.value.hash
+  });
+
+  expect(settledStatusResult.value).to.haveOwnProperty("status");
+  expect(settledStatusResult.success).to.eq(true);
+  await settledResponseHandler(settledStatusResult);
 }

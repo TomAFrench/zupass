@@ -1,18 +1,26 @@
-import { User } from "@pcd/passport-interface";
+import { arrayBufferToHexString } from "@pcd/passport-crypto";
+import {
+  requestConfirmationEmail,
+  requestCreateNewUser,
+  requestUser,
+  User
+} from "@pcd/passport-interface";
 import { Identity } from "@semaphore-protocol/identity";
 import { expect } from "chai";
-import httpMocks from "node-mocks-http";
-import { PCDPass } from "../../src/types";
+import { randomBytes } from "crypto";
+import { Zupass } from "../../src/types";
 
-export async function testLoginPCDPass(
-  application: PCDPass,
+export async function testLogin(
+  application: Zupass,
   email: string,
   {
     force,
+    skipSetupPassword,
     expectUserAlreadyLoggedIn,
-    expectEmailIncorrect,
+    expectEmailIncorrect
   }: {
     force: boolean;
+    skipSetupPassword: boolean;
     expectUserAlreadyLoggedIn: boolean;
     expectEmailIncorrect: boolean;
   }
@@ -20,60 +28,86 @@ export async function testLoginPCDPass(
   const { userService, emailTokenService } = application.services;
   const identity = new Identity();
   const commitment = identity.commitment.toString();
-  const sendEmailResponse = httpMocks.createResponse();
-  await userService.handleSendPcdPassEmail(
+
+  const confirmationEmailResult = await requestConfirmationEmail(
+    application.expressContext.localEndpoint,
     email,
     commitment,
-    force,
-    sendEmailResponse
+    force
   );
 
   if (expectEmailIncorrect) {
-    expect(sendEmailResponse.statusCode).to.eq(500);
-    expect(sendEmailResponse._getData()).to.contain("is not a valid email");
+    expect(confirmationEmailResult.error).to.contain("is not a valid email");
+    expect(confirmationEmailResult.value).to.eq(undefined);
+    expect(confirmationEmailResult.success).to.eq(false);
     return undefined;
   } else if (expectUserAlreadyLoggedIn && !force) {
-    expect(sendEmailResponse.statusCode).to.eq(500);
-    expect(sendEmailResponse._getData()).to.contain("already registered");
+    expect(confirmationEmailResult.error).to.contain("already registered");
+    expect(confirmationEmailResult.value).to.eq(undefined);
+    expect(confirmationEmailResult.success).to.eq(false);
     return undefined;
   } else {
-    expect(sendEmailResponse.statusCode).to.eq(200);
+    expect(confirmationEmailResult.error).to.eq(undefined);
+    expect(confirmationEmailResult.success).to.eq(true);
   }
 
   let token: string;
 
   if (userService.bypassEmail) {
-    const sendEmailResponseJson = sendEmailResponse._getJSONData();
-    expect(sendEmailResponseJson).to.haveOwnProperty("token");
-    token = sendEmailResponseJson.token;
+    expect(confirmationEmailResult.value).to.not.eq(undefined);
+
+    if (confirmationEmailResult.value?.devToken == null) {
+      throw new Error(
+        "expected to get the verification token in bypassEmail mode"
+      );
+    }
+    token = confirmationEmailResult.value.devToken;
   } else {
-    token = (await emailTokenService.getTokenForEmail(email)) as string;
-    expect(token).to.not.eq(null);
+    const serverToken = await emailTokenService.getTokenForEmail(email);
+    if (serverToken == null) {
+      throw new Error(
+        "expected to be able to get the verification token from the internal server state"
+      );
+    }
+    token = serverToken;
   }
 
-  const newUserResponse = httpMocks.createResponse();
-  await userService.handleNewPcdPassUser(
-    token,
+  const salt = arrayBufferToHexString(randomBytes(32));
+  let encryptionKey: string | undefined = undefined;
+  if (skipSetupPassword) {
+    encryptionKey = arrayBufferToHexString(randomBytes(32));
+  }
+
+  const newUserResult = await requestCreateNewUser(
+    application.expressContext.localEndpoint,
     email,
+    token,
     commitment,
-    newUserResponse
+    skipSetupPassword ? undefined : salt,
+    encryptionKey
   );
 
-  const newUserResponseJson = newUserResponse._getJSONData();
-  expect(newUserResponseJson).to.haveOwnProperty("uuid");
-  expect(newUserResponseJson).to.haveOwnProperty("commitment");
-  expect(newUserResponseJson).to.haveOwnProperty("email");
-  expect(newUserResponseJson.commitment).to.eq(commitment);
-  expect(newUserResponseJson.email).to.eq(email);
+  if (!newUserResult.value) {
+    throw new Error("expected to get a user");
+  }
 
-  const getUserResponse = httpMocks.createResponse();
-  await userService.handleGetPcdPassUser(
-    newUserResponseJson.uuid,
-    getUserResponse
+  expect(newUserResult.value).to.haveOwnProperty("uuid");
+  expect(newUserResult.value).to.haveOwnProperty("commitment");
+  expect(newUserResult.value).to.haveOwnProperty("email");
+  expect(newUserResult.success).to.eq(true);
+  expect(newUserResult.value.commitment).to.eq(commitment);
+  expect(newUserResult.value.email).to.eq(email);
+
+  const getUserResponse = await requestUser(
+    application.expressContext.localEndpoint,
+    newUserResult.value.uuid
   );
-  const getUserResponseJson: User = getUserResponse._getJSONData();
 
-  expect(getUserResponseJson).to.deep.eq(newUserResponseJson);
+  if (!getUserResponse.value) {
+    throw new Error("expected to get a user");
+  }
 
-  return { user: getUserResponseJson, identity };
+  expect(getUserResponse.value).to.deep.eq(newUserResult.value);
+
+  return { user: getUserResponse.value, identity };
 }

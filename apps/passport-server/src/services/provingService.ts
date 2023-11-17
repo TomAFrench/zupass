@@ -1,19 +1,24 @@
+import { EdDSAFrogPCDPackage } from "@pcd/eddsa-frog-pcd";
+import { EdDSAPCDPackage } from "@pcd/eddsa-pcd";
+import { EdDSATicketPCDPackage } from "@pcd/eddsa-ticket-pcd";
 import {
   hashProveRequest,
   PendingPCD,
   PendingPCDStatus,
-  ProveRequest,
-  StatusResponse,
-  SupportedPCDsResponse,
+  ProofStatusResponseValue,
+  ServerProofRequest,
+  SupportedPCDsResponseValue
 } from "@pcd/passport-interface";
 import { PCDPackage } from "@pcd/pcd-types";
 import { RLNPCDPackage } from "@pcd/rln-pcd";
+import { RSAImagePCDPackage } from "@pcd/rsa-image-pcd";
 import { RSAPCDPackage } from "@pcd/rsa-pcd";
 import { RSATicketPCDPackage } from "@pcd/rsa-ticket-pcd";
 import { SemaphoreGroupPCDPackage } from "@pcd/semaphore-group-pcd";
 import { SemaphoreSignaturePCDPackage } from "@pcd/semaphore-signature-pcd";
-import { JubJubSignaturePCDPackage } from "jubjub-signature-pcd";
+import { ZKEdDSAEventTicketPCDPackage } from "@pcd/zk-eddsa-event-ticket-pcd";
 import path from "path";
+import { PCDHTTPError } from "../routing/pcdHttpError";
 import { logger } from "../util/logger";
 import { RollbarService } from "./rollbarService";
 
@@ -22,18 +27,19 @@ import { RollbarService } from "./rollbarService";
  */
 export class ProvingService {
   private rollbarService: RollbarService | null;
+
   /**
    * In-memory queue of ProveRequests that requested server-side proving.
    */
-  private queue: Array<ProveRequest> = [];
+  private queue: Array<ServerProofRequest> = [];
 
   /**
    * Stores the current StatusResponse of a specific hashed request, which will
    * also include the a full SerialziedPCD if status === COMPLETE
    */
-  private pendingPCDResponse: Map<string, StatusResponse> = new Map<
+  private pendingPCDResponse: Map<string, ProofStatusResponseValue> = new Map<
     string,
-    StatusResponse
+    ProofStatusResponseValue
   >();
 
   /**
@@ -43,10 +49,13 @@ export class ProvingService {
   private packages: PCDPackage[] = [
     SemaphoreGroupPCDPackage,
     SemaphoreSignaturePCDPackage,
-    JubJubSignaturePCDPackage,
     RLNPCDPackage,
     RSAPCDPackage,
     RSATicketPCDPackage,
+    EdDSAPCDPackage,
+    EdDSATicketPCDPackage,
+    RSAImagePCDPackage,
+    ZKEdDSAEventTicketPCDPackage
   ];
 
   public constructor(rollbarService: RollbarService | null) {
@@ -67,7 +76,9 @@ export class ProvingService {
     return matching;
   }
 
-  public async enqueueProofRequest(request: ProveRequest): Promise<PendingPCD> {
+  public async enqueueProofRequest(
+    request: ServerProofRequest
+  ): Promise<PendingPCD> {
     const hash = hashProveRequest(request);
 
     // don't add identical proof requests to queue to prevent accidental or
@@ -78,7 +89,7 @@ export class ProvingService {
         this.pendingPCDResponse.set(hash, {
           status: PendingPCDStatus.PROVING,
           serializedPCD: undefined,
-          error: undefined,
+          error: undefined
         });
 
         // we don't wait for this to end; we let it work in the background
@@ -87,32 +98,32 @@ export class ProvingService {
         this.pendingPCDResponse.set(hash, {
           status: PendingPCDStatus.QUEUED,
           serializedPCD: undefined,
-          error: undefined,
+          error: undefined
         });
       }
     }
 
     const requestResponse = this.pendingPCDResponse.get(hash);
     if (requestResponse === undefined) {
-      throw new Error("PCD status not defined");
+      throw new PCDHTTPError(500, "PCD status not defined");
     }
 
     const pending: PendingPCD = {
       pcdType: request.pcdType,
       hash: hash,
-      status: requestResponse.status,
+      status: requestResponse.status
     };
 
     return pending;
   }
 
-  public getPendingPCDStatus(hash: string): StatusResponse {
+  public getPendingPCDStatus(hash: string): ProofStatusResponseValue {
     const response = this.pendingPCDResponse.get(hash);
     if (response !== undefined) return response;
     return {
       serializedPCD: undefined,
       error: undefined,
-      status: PendingPCDStatus.NONE,
+      status: PendingPCDStatus.NONE
     };
   }
 
@@ -120,7 +131,7 @@ export class ProvingService {
    * Performs proof of current ProveRequest, and then checks if there are any other
    * proofs in the queue waiting to start.
    */
-  private async serverProve(proveRequest: ProveRequest): Promise<void> {
+  private async serverProve(proveRequest: ServerProofRequest): Promise<void> {
     const currentHash = hashProveRequest(proveRequest);
 
     try {
@@ -128,14 +139,11 @@ export class ProvingService {
       const pcd = await pcdPackage.prove(proveRequest.args);
       const serializedPCD = await pcdPackage.serialize(pcd);
 
-      // artificial lengthen to test multiple incoming requests
-      // await sleep(5000);
-
       logger(`finished PCD request ${currentHash}`, serializedPCD);
       this.pendingPCDResponse.set(currentHash, {
         status: PendingPCDStatus.COMPLETE,
         serializedPCD: JSON.stringify(serializedPCD),
-        error: undefined,
+        error: undefined
       });
     } catch (e: any) {
       logger(e);
@@ -143,7 +151,7 @@ export class ProvingService {
       this.pendingPCDResponse.set(currentHash, {
         status: PendingPCDStatus.ERROR,
         serializedPCD: undefined,
-        error: e.message,
+        error: e.message
       });
     }
 
@@ -161,16 +169,16 @@ export class ProvingService {
         this.pendingPCDResponse.set(topHash, {
           status: PendingPCDStatus.PROVING,
           serializedPCD: undefined,
-          error: undefined,
+          error: undefined
         });
         this.serverProve(this.queue[0]);
       }
     }
   }
 
-  public getSupportedPCDTypes(): SupportedPCDsResponse {
+  public getSupportedPCDTypes(): SupportedPCDsResponseValue {
     return {
-      names: this.packages.map((p) => p.name),
+      names: this.packages.map((p) => p.name)
     };
   }
 }
@@ -178,19 +186,27 @@ export class ProvingService {
 export async function startProvingService(
   rollbarService: RollbarService | null
 ): Promise<ProvingService> {
-  const fullPath = path.join(__dirname, "../../public/semaphore-artifacts");
+  const fullPath = path.join(__dirname, "../../public");
 
-  await SemaphoreGroupPCDPackage.init!({
-    wasmFilePath: fullPath + "/16.wasm",
-    zkeyFilePath: fullPath + "/16.zkey",
+  await SemaphoreGroupPCDPackage.init?.({
+    wasmFilePath: fullPath + "/semaphore-artifacts/16.wasm",
+    zkeyFilePath: fullPath + "/semaphore-artifacts/16.zkey"
   });
 
-  await SemaphoreSignaturePCDPackage.init!({
-    wasmFilePath: fullPath + "/16.wasm",
-    zkeyFilePath: fullPath + "/16.zkey",
+  await SemaphoreSignaturePCDPackage.init?.({
+    wasmFilePath: fullPath + "/semaphore-artifacts/16.wasm",
+    zkeyFilePath: fullPath + "/semaphore-artifacts/16.zkey"
   });
 
-  await RSATicketPCDPackage.init!({ makeEncodedVerifyLink: undefined });
+  await RSATicketPCDPackage.init?.({ makeEncodedVerifyLink: undefined });
+  await EdDSAFrogPCDPackage.init?.({ makeEncodedVerifyLink: undefined });
+  await EdDSATicketPCDPackage.init?.({ makeEncodedVerifyLink: undefined });
+
+  await ZKEdDSAEventTicketPCDPackage.init?.({
+    wasmFilePath:
+      fullPath + "/artifacts/zk-eddsa-event-ticket-pcd/circuit.wasm",
+    zkeyFilePath: fullPath + "/artifacts/zk-eddsa-event-ticket-pcd/circuit.zkey"
+  });
 
   const provingService = new ProvingService(rollbarService);
   return provingService;

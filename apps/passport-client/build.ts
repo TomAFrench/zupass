@@ -2,36 +2,42 @@ import { NodeGlobalsPolyfillPlugin } from "@esbuild-plugins/node-globals-polyfil
 import { NodeModulesPolyfillPlugin } from "@esbuild-plugins/node-modules-polyfill";
 import * as dotenv from "dotenv";
 import { build, BuildOptions, context } from "esbuild";
+import express from "express";
 import fs from "fs";
 import Handlebars from "handlebars";
+import https from "https";
 import * as path from "path";
 import { v4 as uuid } from "uuid";
 
 dotenv.config();
 
-const IS_ZUZALU = process.env.IS_ZUZALU === "true";
-
 const define = {
-  "process.env.IS_ZUZALU": JSON.stringify(process.env.IS_ZUZALU ?? "false"),
   "process.env.PASSPORT_SERVER_URL": JSON.stringify(
     process.env.PASSPORT_SERVER_URL || "http://localhost:3002"
   ),
   "process.env.NODE_ENV": JSON.stringify(process.env.NODE_ENV || "development"),
   ...(process.env.ROLLBAR_TOKEN !== undefined
     ? {
-        "process.env.ROLLBAR_TOKEN": JSON.stringify(process.env.ROLLBAR_TOKEN),
+        "process.env.ROLLBAR_TOKEN": JSON.stringify(process.env.ROLLBAR_TOKEN)
       }
     : {}),
   ...(process.env.ROLLBAR_ENV_NAME !== undefined
     ? {
         "process.env.ROLLBAR_ENV_NAME": JSON.stringify(
           process.env.ROLLBAR_ENV_NAME
-        ),
+        )
       }
     : {}),
+  ...(process.env.FROGCRYPTO_SERVER_URL !== undefined
+    ? {
+        "process.env.FROGCRYPTO_SERVER_URL": JSON.stringify(
+          process.env.FROGCRYPTO_SERVER_URL
+        )
+      }
+    : {})
 };
 
-const passportAppOpts: BuildOptions = {
+const appOpts: BuildOptions = {
   sourcemap: true,
   bundle: true,
   entryPoints: ["pages/index.tsx"],
@@ -39,27 +45,27 @@ const passportAppOpts: BuildOptions = {
     NodeModulesPolyfillPlugin(),
     NodeGlobalsPolyfillPlugin({
       process: true,
-      buffer: true,
-    }),
+      buffer: true
+    })
   ],
   loader: {
-    ".svg": "dataurl",
+    ".svg": "dataurl"
   },
   outdir: "public/js",
   metafile: true,
-  define,
+  define
 };
 
 const serviceWorkerOpts: BuildOptions = {
-  tsconfig: "./service-worker-tsconfig.json",
+  tsconfig: "./src/worker/tsconfig.json",
   bundle: true,
-  entryPoints: ["src/service-worker.ts"],
+  entryPoints: ["src/worker/service-worker.ts"],
   plugins: [
     NodeModulesPolyfillPlugin(),
     NodeGlobalsPolyfillPlugin({
       process: true,
-      buffer: true,
-    }),
+      buffer: true
+    })
   ],
   // The output directory here needs to be `public/` rather than
   // `public/js` in order for the service worker to be served from
@@ -73,31 +79,30 @@ const serviceWorkerOpts: BuildOptions = {
   // is invoked, so that each new production deploy invalidates the previous
   // service worker, which clears the website's application code (html, js, etc.),
   // so that clients are not forever stuck on one version of the code.
-  define: { ...define, "process.env.SW_ID": JSON.stringify(uuid()) },
+  define: { ...define, "process.env.SW_ID": JSON.stringify(uuid()) }
 };
 
 run(process.argv[2])
-  .then(() => console.log("Built passport client"))
+  .then(() => console.log("Built Zupass client"))
   .catch((err) => console.error(err));
 
 async function run(command: string) {
   compileHtml();
-  compileFavicon();
 
   switch (command) {
     case "build":
-      const passportRes = await build({ ...passportAppOpts, minify: true });
-      console.error("Built", passportRes);
+      const appRes = await build({ ...appOpts, minify: true });
+      console.error("Built", appRes);
 
       // Bundle size data for use with https://esbuild.github.io/analyze/
       fs.writeFileSync(
-        `${passportAppOpts.outdir}/bundle-size.json`,
-        JSON.stringify(passportRes.metafile)
+        `${appOpts.outdir}/bundle-size.json`,
+        JSON.stringify(appRes.metafile)
       );
 
       const serviceWorkerRes = await build({
         ...serviceWorkerOpts,
-        minify: true,
+        minify: true
       });
       console.error("Built", serviceWorkerRes);
       break;
@@ -105,16 +110,33 @@ async function run(command: string) {
       const serviceWorkerCtx = await context(serviceWorkerOpts);
       await serviceWorkerCtx.watch();
 
-      const ctx = await context(passportAppOpts);
+      const ctx = await context(appOpts);
       await ctx.watch();
 
-      const { host } = await ctx.serve({
-        servedir: "public",
-        port: 3000,
-        host: "0.0.0.0",
-      });
+      const port = 3000;
 
-      console.log(`Serving passport client on ${host}`);
+      if (process.env.IS_LOCAL_HTTPS === "true") {
+        console.log(`Serving local HTTPS...`);
+        const app = express();
+        app.use(express.static("public"));
+
+        const httpsOptions = {
+          key: fs.readFileSync("../certificates/dev.local-key.pem"),
+          cert: fs.readFileSync("../certificates/dev.local.pem")
+        };
+
+        https.createServer(httpsOptions, app).listen(port, () => {
+          console.log(`Serving Zupass client on https://dev.local:${port}`);
+        });
+      } else {
+        const { host } = await ctx.serve({
+          servedir: "public",
+          port,
+          host: "0.0.0.0"
+        });
+        console.log(`Serving Zupass client on ${host}:${port}`);
+      }
+
       break;
     default:
       throw new Error(`Unknown command ${command}`);
@@ -127,24 +149,7 @@ function compileHtml() {
     .toString();
   const template = Handlebars.compile(indexHtmlTemplateSource);
 
-  const html = template({
-    title: IS_ZUZALU ? "Zuzalu Passport" : "PCDPass",
-    cssPath: IS_ZUZALU ? "/global-zupass.css" : "/global-pcdpass.css",
-  });
+  const html = template({});
 
   fs.writeFileSync(path.join("public", "index.html"), html);
-}
-
-function compileFavicon() {
-  if (IS_ZUZALU) {
-    fs.copyFileSync(
-      path.join("public", "favicon-zupass.ico"),
-      path.join("public", "favicon.ico")
-    );
-  } else {
-    fs.copyFileSync(
-      path.join("public", "favicon-pcdpass.ico"),
-      path.join("public", "favicon.ico")
-    );
-  }
 }

@@ -2,29 +2,36 @@ import { Application } from "express";
 import * as http from "http";
 import Libhoney from "libhoney";
 import { Pool } from "postgres-pool";
-import { IDevconnectPretixAPI } from "./apis/devconnect/devconnectPretixAPI";
 import { IEmailAPI } from "./apis/emailAPI";
-import { IPretixAPI } from "./apis/pretixAPI";
-import { DevconnectPretixSyncService } from "./services/devconnectPretixSyncService";
+import { IZuconnectTripshaAPI } from "./apis/zuconnect/zuconnectTripshaAPI";
+import { IZuzaluPretixAPI } from "./apis/zuzaluPretixAPI";
+import {
+  DevconnectPretixAPIFactory,
+  DevconnectPretixSyncService
+} from "./services/devconnectPretixSyncService";
 import { DiscordService } from "./services/discordService";
 import { E2EEService } from "./services/e2eeService";
 import { EmailTokenService } from "./services/emailTokenService";
+import { FrogcryptoService } from "./services/frogcryptoService";
 import { IssuanceService } from "./services/issuanceService";
+import { KudosbotService } from "./services/kudosbotService";
 import { MetricsService } from "./services/metricsService";
-import { PretixSyncService } from "./services/pretixSyncService";
+import { MultiProcessService } from "./services/multiProcessService";
+import { PersistentCacheService } from "./services/persistentCacheService";
 import { ProvingService } from "./services/provingService";
 import { RollbarService } from "./services/rollbarService";
 import { SemaphoreService } from "./services/semaphoreService";
+import { TelegramService } from "./services/telegramService";
 import { UserService } from "./services/userService";
+import { ZuconnectTripshaSyncService } from "./services/zuconnectTripshaSyncService";
+import { ZuzaluPretixSyncService } from "./services/zuzaluPretixSyncService";
 
 export interface ApplicationContext {
   dbPool: Pool;
   honeyClient: Libhoney | null;
-  // whether this is the version of the application purpose-built for zuzalu,
-  // or the generic version
-  isZuzalu: boolean;
   resourcesDir: string;
   publicResourcesDir: string;
+  gitCommitHash: string;
 }
 
 export interface GlobalServices {
@@ -34,28 +41,38 @@ export interface GlobalServices {
   emailTokenService: EmailTokenService;
   rollbarService: RollbarService | null;
   provingService: ProvingService;
-  pretixSyncService: PretixSyncService | null;
+  zuzaluPretixSyncService: ZuzaluPretixSyncService | null;
   devconnectPretixSyncService: DevconnectPretixSyncService | null;
+  zuconnectTripshaSyncService: ZuconnectTripshaSyncService | null;
   metricsService: MetricsService;
   issuanceService: IssuanceService | null;
   discordService: DiscordService | null;
+  telegramService: TelegramService | null;
+  kudosbotService: KudosbotService | null;
+  frogcryptoService: FrogcryptoService | null;
+  persistentCacheService: PersistentCacheService;
+  multiprocessService: MultiProcessService;
 }
 
-export interface PCDPass {
+export interface Zupass {
   context: ApplicationContext;
   services: GlobalServices;
   apis: APIs;
-  expressContext: { app: Application; server: http.Server };
+  expressContext: {
+    app: Application;
+    server: http.Server;
+    localEndpoint: string;
+  };
 }
 
 export interface APIs {
   emailAPI: IEmailAPI | null;
-  pretixAPI: IPretixAPI | null;
-  devconnectPretixAPI: IDevconnectPretixAPI | null;
+  zuzaluPretixAPI: IZuzaluPretixAPI | null;
+  devconnectPretixAPIFactory: DevconnectPretixAPIFactory | null;
+  zuconnectTripshaAPI: IZuconnectTripshaAPI | null;
 }
 
 export interface EnvironmentVariables {
-  IS_ZUZALU?: string;
   MAILGUN_API_KEY?: string;
   DATABASE_USERNAME?: string;
   DATABASE_PASSWORD?: string;
@@ -71,4 +88,12 @@ export interface EnvironmentVariables {
   PRETIX_VISITOR_EVENT_ID?: string;
   ROLLBAR_TOKEN?: string;
   SUPPRESS_LOGGING?: string;
+  SERVER_EDDSA_PRIVATE_KEY?: string;
+  TELEGRAM_BOT_TOKEN?: string;
+  TELEGRAM_PRIVATE_CHAT_ID?: string;
+  PASSPORT_CLIENT_URL?: string;
+  ACCOUNT_RESET_RATE_LIMIT_DISABLED?: string;
+  ACCOUNT_RESET_LIMIT_QUANTITY?: string;
+  ACCOUNT_RESET_LIMIT_DURATION_MS?: string;
+  TELEGRAM_KUDOSBOT_TOKEN?: string;
 }

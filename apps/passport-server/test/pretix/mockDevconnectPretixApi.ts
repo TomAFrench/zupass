@@ -1,103 +1,94 @@
-import {
-  DevconnectPretixEvent,
-  DevconnectPretixEventSettings,
-  DevconnectPretixItem,
-  DevconnectPretixOrder,
-  IDevconnectPretixAPI
-} from "../../src/apis/devconnect/devconnectPretixAPI";
-import { logger } from "../../src/util/logger";
-import {
-  DevconnectPretixDataMocker,
-  IMockDevconnectPretixData
-} from "./devconnectPretixDataMocker";
+import { rest } from "msw";
+import { SetupServer, setupServer } from "msw/node";
+import { DevconnectPretixDataMocker } from "./devconnectPretixDataMocker";
 
-export function newMockDevconnectPretixAPI(): IDevconnectPretixAPI {
-  const mocker = new DevconnectPretixDataMocker();
-  const mockData = mocker.get();
-  logger("[MOCK] devconnect pretix data", mockData);
-  return getDevconnectMockPretixAPI(mockData);
-}
+export function getDevconnectMockPretixAPIServer(
+  orgs: IterableIterator<string>,
+  mocker: DevconnectPretixDataMocker
+): SetupServer {
+  const handlers = [];
 
-export function getDevconnectMockPretixAPI(
-  mockData: IMockDevconnectPretixData
-): IDevconnectPretixAPI {
-  logger("[MOCK] instantiating mock devconnect pretix api");
+  for (const orgUrl of orgs) {
+    handlers.push(
+      rest.get(orgUrl + "/events", (req, res, ctx) => {
+        const org = mocker.getOrgByUrl(orgUrl);
+        return res(
+          ctx.json({ results: [...org.eventByEventID.values()], next: null })
+        );
+      })
+    );
 
-  return {
-    fetchAllEvents: async (
-      orgUrl: string,
-      token: string
-    ): Promise<DevconnectPretixEvent[]> => {
-      const org = mockData.organizersByOrgUrl.get(orgUrl);
-      if (!org) throw new Error(`missing org ${orgUrl}`);
-      if (org.token !== token)
-        throw new Error(`incorrect token ${token} for org ${orgUrl}`);
-      return [...org.eventByEventID.values()];
-    },
-    fetchEvent: async (
-      orgUrl: string,
-      token: string,
-      eventID: string
-    ): Promise<DevconnectPretixEvent> => {
-      const org = mockData.organizersByOrgUrl.get(orgUrl);
-      if (!org) throw new Error(`missing org ${orgUrl}`);
-      if (org.token !== token)
-        throw new Error(`incorrect token ${token} for org ${orgUrl}`);
-      const event = org.eventByEventID.get(eventID);
-      if (event) {
-        return event;
-      }
-      throw new Error("404 event not found");
-    },
-    fetchItems: async (
-      orgUrl,
-      token,
-      eventId
-    ): Promise<DevconnectPretixItem[]> => {
-      const org = mockData.organizersByOrgUrl.get(orgUrl);
-      if (!org) throw new Error(`missing org ${orgUrl}`);
-      if (org.token !== token)
-        throw new Error(`incorrect token ${token} for org ${orgUrl}`);
-      return org.itemsByEventID.get(eventId) ?? [];
-    },
-    fetchOrders: async (
-      orgUrl: string,
-      token: string,
-      eventID: string
-    ): Promise<DevconnectPretixOrder[]> => {
-      const org = mockData.organizersByOrgUrl.get(orgUrl);
-      if (!org) throw new Error(`missing org ${orgUrl}`);
-      if (org.token !== token)
-        throw new Error(`incorrect token ${token} for org ${orgUrl}`);
-      const result = org.ordersByEventID.get(eventID) ?? [];
-      logger(
-        `[MOCK] fetchOrders('${eventID}') =>`,
-        JSON.stringify(result, null, 2)
-      );
-      return result;
-    },
-    fetchEventSettings: async (
-      orgUrl: string,
-      token: string,
-      eventID: string
-    ): Promise<DevconnectPretixEventSettings> => {
-      const org = mockData.organizersByOrgUrl.get(orgUrl);
-      if (!org) throw new Error(`missing org ${orgUrl}`);
-      if (org.token !== token)
-        throw new Error(`incorrect token ${token} for org ${orgUrl}`);
+    handlers.push(
+      rest.get(orgUrl + "/events/:event", (req, res, ctx) => {
+        const org = mocker.getOrgByUrl(orgUrl);
+        const event = org.eventByEventID.get(req.params.event as string);
+        if (!event) {
+          return res(ctx.status(404));
+        }
+        return res(ctx.json(event));
+      })
+    );
 
-      const result = org.settingsByEventID.get(eventID);
+    handlers.push(
+      rest.get(orgUrl + "/events/:event/items", (req, res, ctx) => {
+        const org = mocker.getOrgByUrl(orgUrl);
+        const items = org.itemsByEventID.get(req.params.event as string) ?? [];
+        return res(ctx.json({ results: items, next: null }));
+      })
+    );
 
-      logger(
-        `[MOCK] fetchEventSettings('${eventID}') =>`,
-        JSON.stringify(result, null, 2)
-      );
+    handlers.push(
+      rest.get(orgUrl + "/events/:event/orders", (req, res, ctx) => {
+        const org = mocker.getOrgByUrl(orgUrl);
+        const orders =
+          org.ordersByEventID.get(req.params.event as string) ?? [];
+        return res(ctx.json({ results: orders, next: null }));
+      })
+    );
 
-      if (result) {
-        return result;
-      } else {
-        throw new Error("Event settings not found");
-      }
-    }
-  };
+    handlers.push(
+      rest.get(orgUrl + "/events/:event/categories", (req, res, ctx) => {
+        const org = mocker.getOrgByUrl(orgUrl);
+        const categories =
+          org.categoriesByEventId.get(req.params.event as string) ?? [];
+        return res(ctx.json({ results: categories, next: null }));
+      })
+    );
+
+    handlers.push(
+      rest.get(orgUrl + "/events/:event/settings", (req, res, ctx) => {
+        const org = mocker.getOrgByUrl(orgUrl);
+        const settings = org.settingsByEventID.get(req.params.event as string);
+        return res(ctx.json(settings));
+      })
+    );
+
+    handlers.push(
+      rest.get(orgUrl + "/events/:event/checkinlists", (req, res, ctx) => {
+        return res(
+          ctx.json({ results: [{ id: 1, name: "Test" }], next: null })
+        );
+      })
+    );
+
+    handlers.push(
+      rest.post(orgUrl + "/checkinrpc/redeem", async (req, res, ctx) => {
+        const body = new Map(Object.entries(await req.json()));
+        if (
+          !body.has("secret") ||
+          !body.has("lists") ||
+          typeof body.get("secret") !== "string" ||
+          !Array.isArray(body.get("lists"))
+        ) {
+          return res(ctx.status(400), ctx.json({}));
+        }
+
+        return res(ctx.json({ status: "ok" }));
+      })
+    );
+  }
+
+  const server = setupServer(...handlers);
+
+  return server;
 }

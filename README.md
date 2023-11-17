@@ -1,53 +1,39 @@
-# Zupass
+# Zupass and the Proof-Carrying Data SDK
 
-## What is the Zuzalu Passport?
+## What is Zupass?
 
-_This README is generally aimed at developers interested in building on top of the Zuzalu Passport. If you are a resident looking for instructions on how to set up your Passport, visit [this link](https://docs.google.com/document/d/1pADZ8ixBkKkJcw3NA1dNMhrB6dwWGfFx6H92IV6dKuU/edit?usp=sharing)._
+_This README is generally aimed at developers interested in using, building on top of, or contributing to Zupass._
 
-The [Zuzalu Passport](https://zupass.org) allows Zuzalu residents to store personal data relating to Zuzalu identity, reputation, activity, and more, and to share any part of this data with any (physical and digital) Zuzalu service or app of their choosing. Zuzalu services may include anything built by Zuzalu administrators or other residents: physical authentication procedures, the Zuzalu website, Zuzalu message boards, Zuzalu governance infrastructure, a resident _Mafia_ game, a community matchmaking service, a community newsletter, and more.
+[Zupass](https://zupass.org) is software for storing and managing _Proof-Carrying Data_: any data whose well-formedness and validity are cryptographically verifiable. Examples of Proof-Carrying Data include:
 
-**Every active Zuzalu resident and visitor has created a Zuzalu Passport, making it a simple but powerful "base" for anyone to build and experiment on top of.** The goal of the Zuzalu Passport is to help the Zuzalu community collectively build out community infrastructure over the course of the next two months, by providing a solid foundation and by onboarding people onto new tools enabled by zero-knowledge.
+- **Signatures**. Ex: an arbitrarily-structured JSON representing a ticket to Zuzalu, signed by the Zuzalu ticketing authority's public key.
+- **Merkle proofs**. Ex: a Merkle proof that a Semaphore identity belongs to a group of identities representing people in some digital community.
+- **ZK proofs**. Ex: a groth16 proof that I am 4 [degrees of separation](https://ethdos.xyz/) from Vitalik, or that I possess [a valid Zuzalu passport](https://zupoll.org/) (without revealing who I am), or that I [attended a certain Devconnect event]().
+- **Hash commitments**. Ex: a secret password, and a hash of that password.
+- **Keypairs**. Ex: an Ethereum keypair, or a Semaphore secret and identity commitment.
 
-Under the hood, the Zuzalu Passport stores cryptographically-manipulable data such as keypairs, credentials, attestations, and more, and uses a very lightweight standard for arbitrary zero-knowledge proofs to pass along this data to applications. ZKPs enable three critical features in the Passport system:
+Zupass allows users to store and organize PCDs, and to respond to queries from third-party applications about their PCDs. Here are some kinds of queries a third party can ask a user with a Zupass:
 
-- **Any Zuzalu resident can build applications that use the Passport system**, without needing permission from Zuzalu organizers or Passport maintainers. There are no API keys, centralized servers, proprietary standards, special tokens, or gated endpoints\* that you need approval for in order to build an experimental community governance project that anyone with a Zuzalu Passport can participate in. With the Passport architecture, application developers can simply give or request data from users directly.
-- **Zuzalu applications are interoperable by default, and can understand and "talk to" one another without the need for special permissioning.** For example, one resident could build a message board where posters can accumulate "Zuzalu karma" for posting high-quality content, another resident can build a "private POAPs" service allowing Zuzalu event attendees to prove participation in community events, and a third resident could build a private polling app where users with either more "Zuzalu karma" OR provably high community event participation can cast votes carrying more voting weight--without the three application builders having to coordinate at all!
-- **Users store and control their own data.** Zuzalu user data is by default only accessible by the user on their own devices--not by the Zuzalu organizers, the Passport maintainers, or the developers of any Zuzalu applications. Additionally, thanks to ZKPs, users have total control over who they share this data with, and how.
+- A gated Discord server can ask a user with a Zupass whether they possess a signed "ticket" authorizing them to join the server.
+- A community polling website like [Zupoll](https://zupoll.org/) can ask a user with a Zupass whether they are someone in a whitelisted set of voters (without the user revealing who they are!).
+- A game leaderboard can ask a user with a Zupass whether they have completed the necessary in-game requirements to be added to the leaderboard.
+- A new social media site could ask a user to import their posts, likes, follower count, and even [usernames](https://zkemail.xyz/) from other social platforms.
+- A financial service provider could ask a user with a Zupass to prove that they have a recently-signed bank statement, credit card statement, and tax return, and that running a publicly-known financial health formula on these statements results in a certain creditworthiness score.
 
-As mentioned above, we hope for the Zuzalu Passport to enable more permissionless experimentation in community and governance infrastructure at Zuzalu. You can find a list of starter ideas for things to build on the Zuzalu Passport [here](https://0xparc.notion.site/2023-03-28-Zuzalu-Passport-RFP-31f9fa45d3ba40289edcf45559536bbb). We'll also be running workshops and a hackathon track throughout ZK Week, for Zuzalu residents and visitors who are interested in hacking on top of the Passport!
+Using zkSNARKs, it is theoretically possible for third parties to make _any_ query into a user's Zupass, so long as they provide a zkSNARK circuit for that query. For example, the last example in the list above could be accomplished by designing a ZK circuit that performs signature verification, JSON parsing / PDF parsing / regex matching, and a forward pass of a financial model.
 
-\*_Currently, we run a server that serves a Merkle Tree of participant public keys and some metadata for convenience, though this could easily be migrated on-chain._
+## For Developers: Understanding the PCD Model
 
-## For Developers: Understanding the Zuzalu Passport Model
+### Proof-Carrying Data
 
-### Zuzalu Passport Cards
+As a developer, if you are interested in working with Zupass, the PCD SDK, or any data compatible with the open PCD interfaces, you'll need to understand the "PCD" abstraction.
 
-The Zuzalu Passport holds a collection of _cards_. UX-wise, the Zuzalu Passport interface is similar in concept to the [Apple Wallet](https://help.apple.com/assets/63BCA8F46048E91596771871/63BCA8F56048E9159677187F/en_US/36d4991d06798f24f230e7282a911222.png).
+"PCD" is short for "Proof-Carrying Data"\*. In this repository, we use this term to refer to any data that is attached to a proof of its own correctness, without the need for external context to verify.
 
-Initially, the only card in the Zuzalu Passport wallet is a [Semaphore keypair](https://semaphore.appliedzkp.org/) that acts as your primary identifier as a resident or visitor. This is a special card: it displays a QR code which you can use to prove that you are indeed a Zuzalu resident.
+All PCDs consist of:
 
-However, the Passport data model allows anyone to create new types of cards, and to publish a flow to allow others to add a card of this new type into their passport. The flow for adding a new type of card to your Passport will be similar to the Apple Wallet's "Add to Wallet" button. Examples of other cards you could build, and allow others to add to their Passports, include:
-
-- An Ethereum signature proving that you are `janedoe.eth` on Ethereum. (see the [ETH PCD generator](https://eth-pcd.vercel.app/)).
-- A signature from a Synthetic Biology subevent host, certifying that you attended the subevent, or that you're authorized to attend the subevent.
-- An email you've received from invites@zuzalu.org identifying the apartment number you're staying in.
-- An [ETHdos](https://ethdos.xyz/)-style recursive ZK proof, certifying that you are 2 degrees of connection away from Vitalik.
-- A ZKML proof composed with a timestamp server signature, certifying that you visited the Lustica Bay lighthouse on Sunday, April 2nd.
-
-Any third-party service--for example, a Zuzalu voting app--can request a card, multiple cards, or some claim about one or multiple cards from the Zuzalu Passport ([live examples](https://consumer-client.onrender.com/)). For those who have used Ethereum apps before, this is a similar flow to how a dapp website might ask you to sign a message or a transaction by popping up Metamask. A few more concrete examples of card requests that a third-party app could make:
-
-- You have a valid Semaphore keypair card such that the public key is in the latest Zuzalu Residents Merkle root.
-- You have either attended a subevent (i.e. have a signature from a subevent host certifying that you attended a subevent), OR you're within 2 degrees of connection away from Vitalik.
-- According to a public "Zuzalu Citizen Score" formula that takes into account subevents you've participated in, posts you've made on the Zuzalu anonymous messaging forum, and your contributions to open-source Zuzalu infrastructure on Github, you have a voting weight of at least 500 in the next Zuzalu election.
-- You participated in the Zuzalu ZKML scavenger hunt, and took pictures of all eight of the Zuzalu Artifacts in the last week.
-
-### Cards and Card Requests as "PCDs"
-
-As a developer, if you are interested in working with the Zuzalu Passport and with Zuzalu Passport Cards, you'll need to understand the "PCD" abstraction.
-
-"PCD" is short for "Proof-Carrying Data"\*. In this repository, we use this term to refer to any claim about the world that is attached to a proof of its own correctness, without the need for external context to verify--such as a user card, or a response to a third-party request for information about user cards.
-
-All PCDs consist of a "claim", which is the human-interpretable statement that the PCD is making (i.e. "I am a Zuzalu resident"); and a "proof" attached to the "claim," which is a cryptographic or mathematical proof of the claim. All PCDs within this SDK also expose a `prove` and `verify` function, which allow you to instantiate them, and verify that they are indeed correct.
+- a "claim", which is an arbitrarily-structured set of fields (cryptographic identifiers such as public keys, hashes, Merkle roots, etc.) and an implicit set of claimed relationships between these fields. The set of claimed relationships is given by the PCD "type."
+- a "proof" attached to the "claim," which is a cryptographic proof of the claim. All PCDs within this SDK also expose a `prove` and `verify` function, which allow you to instantiate them, and verify that they are indeed correct.
 
 Many PCDs are [zkSNARKs](https://learn.0xparc.org/materials/circom/prereq-materials/topic-sampler). However, not all PCDs are zkSNARKs, or even zero-knowledge proofs. For example, one PCD that is not a zkSNARK is a piece of data signed by an RSA private key along with the corresponding public key:
 
@@ -92,6 +78,9 @@ yarn
 # you previously started in this project, you can also run the command
 # yarn localdb:restart
 yarn localdb:init && yarn localdb:up
+
+# builds the apps and packages located in the `/apps` and `/packages/` directories
+yarn build
 
 # starts all the applications contained in the `/apps` directory of the
 # repository. this includes the passport server and client, as well as
@@ -147,17 +136,12 @@ Each package and app which needs testing has a `test` script in its `package.jso
 
 All the packages and apps are linted using [eslint](https://eslint.org/). The linting runs in GitHub Actions, and your branch must pass all the linting rules before it is merged. To run the linter locally, you can run the command `yarn lint` in the root of this project to lint all the packages and apps in the repository. If you want to run the linter on a particular project or package, navigate to its directory, and execute `yarn lint` from there.
 
-## For Developers: Zupass Production Deployments
+## For Developers: Production Deployments
 
 ### Zupass
 
 - static site is deployed to https://zupass.org/
-- server is deployed to https://api.zupass.com/
-
-### PCDPass
-
-- static site is deployed to https://pcdpass.xyz/
-- server is deployed to https://api.pcdpass.xyz/
+- server is deployed to https://api.zupass.org/
 
 ### Example PCD App
 
@@ -165,7 +149,6 @@ All the packages and apps are linted using [eslint](https://eslint.org/). The li
 - server is deployed to https://consumer-server.onrender.com
 
 ## For Developers: Adding a new PCD Type
-
 
 ### `PCDPackage`
 
@@ -190,6 +173,7 @@ Next, the PCD implementation (as represented by its `PCDPackage`) must be added 
 Adding the new `PCDPackage` to the appropriate places is necessary for Zupass to be able to 'handle' the new type of PCD correctly.
 
 Here are a few example pull requests that integrate a new `PCDPackage` into Zupass are:
+
 - https://github.com/proofcarryingdata/zupass/pull/290
 - https://github.com/proofcarryingdata/zupass/pull/134
 - https://github.com/proofcarryingdata/zupass/pull/154
@@ -199,10 +183,12 @@ The Zupass team reserves the right to reject any proposed PCD according to our d
 ### Internal vs. External
 
 Some `PCDPackage` implementations live inside of the Zupass repository:
+
 - https://github.com/proofcarryingdata/zupass/pull/290
 - https://github.com/proofcarryingdata/zupass/pull/134
 
 Others live outside off the Zupass repository:
+
 - https://github.com/proofcarryingdata/zupass/pull/154
 
 The choice between Internal and External is yours to make. In either case, we will review the code for security vulnerabilities, testing, code quality, and documentation.
@@ -212,5 +198,6 @@ The choice between Internal and External is yours to make. In either case, we wi
 We recommend that you add an example for how a developer may create and consume your new type of PCD in the `consumer-client` app included in this repository. Check out how other PCDs have done this by navigating to http://localhost:3001/ after running `yarn dev` in the root of your project - this is where the `consumer-client` application lives.
 
 We also recommend that you create a comprehensive test suite for your new PCD, so that we can be confident in your implementation. A few test suites we think are good can be found in the following PCD implementations:
+
 - https://github.com/proofcarryingdata/zupass/blob/main/packages/semaphore-group-pcd/test/SemaphoreGroupPCD.spec.ts
 - https://github.com/proofcarryingdata/zupass/blob/main/packages/rsa-pcd/test/RSAPCD.spec.ts

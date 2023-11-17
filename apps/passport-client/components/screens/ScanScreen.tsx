@@ -2,55 +2,91 @@ import { useCallback } from "react";
 import { QrReader } from "react-qr-reader";
 import { useNavigate } from "react-router-dom";
 import styled from "styled-components";
-import { Spacer, TextCenter } from "../core";
+import { useLaserScannerKeystrokeInput } from "../../src/appHooks";
+import { loadUsingLaserScanner } from "../../src/localstorage";
+import { maybeRedirect } from "../../src/util";
+import { H5, Spacer, TextCenter } from "../core";
 import { CircleButton } from "../core/Button";
 import { icons } from "../icons";
 import { AppContainer } from "../shared/AppContainer";
+import { IndicateIfOffline } from "../shared/IndicateIfOffline";
 
 // Scan a PCD QR code, then go to /verify to verify and display the proof.
 export function ScanScreen() {
+  const usingLaserScanner = loadUsingLaserScanner();
+  useLaserScannerKeystrokeInput();
   const nav = useNavigate();
+
   return (
     <AppContainer bg="gray">
-      <QrReader
-        onResult={(result, error) => {
-          if (result != null) {
-            console.log(`Got result, considering redirect`, result.getText());
-            const newLoc = maybeRedirect(result.getText());
-            if (newLoc) nav(newLoc);
-          } else if (error != null) {
-            console.info(error);
-          }
-        }}
-        constraints={{ facingMode: "environment", aspectRatio: 1 }}
-        ViewFinder={ViewFinder}
-        containerStyle={{ width: "100%" }}
-      />
-      <Spacer h={24} />
-      <TextCenter>Scan a ticket to verify</TextCenter>
+      {!usingLaserScanner && (
+        <>
+          <QrReader
+            onResult={(result, error) => {
+              if (result != null) {
+                console.log(
+                  `Got result, considering redirect`,
+                  result.getText()
+                );
+                const newLoc = maybeRedirect(result.getText());
+                if (newLoc) nav(newLoc);
+              } else if (error != null) {
+                //    console.info(error);
+              }
+            }}
+            constraints={{ facingMode: "environment", aspectRatio: 1 }}
+            ViewFinder={ViewFinder}
+            containerStyle={{ width: "100%" }}
+          />
+          <Spacer h={16} />
+          <TextCenter>Scan a ticket to verify</TextCenter>
+        </>
+      )}
+      {usingLaserScanner && (
+        <>
+          <FullWidthRow>
+            <Spacer h={32} />
+            <TextCenter>
+              Press and hold down the <Orange>orange</Orange> scan button and
+              position the attendee's QR code in front of the laser light. If
+              you're having trouble, ask the participant to increase the
+              brightness on their screen.
+            </TextCenter>
+            <Spacer h={16} />
+            <TextCenter>
+              Please reach out to the Zupass Help Desk for any further scanning
+              issues.
+            </TextCenter>
+            {/* TODO: Add an image if we have a good one */}
+          </FullWidthRow>
+        </>
+      )}
+      <Spacer h={32} />
+      <IndicateIfOffline>
+        <H5 style={{ color: "var(--danger)" }}>Offline Mode</H5>
+        <Spacer h={8} />
+        You're offline. Zupass is using a backed up copy of event tickets.
+        Check-ins will be synced the next time you start the app with a working
+        network connection.
+      </IndicateIfOffline>
     </AppContainer>
   );
 }
 
-function maybeRedirect(text: string): string | null {
-  const verifyUrlPrefix = `${window.location.origin}#/verify?`;
-  if (text.startsWith(verifyUrlPrefix)) {
-    const hash = text.substring(window.location.origin.length + 1);
-    console.log(`Redirecting to ${hash}`);
-    return hash;
-  }
-  return null;
+function CloseButton() {
+  const nav = useNavigate();
+  const onClose = useCallback(() => nav("/"), [nav]);
+  return (
+    <CircleButton diameter={20} padding={16} onClick={onClose}>
+      <img draggable="false" src={icons.closeWhite} width={20} height={20} />
+    </CircleButton>
+  );
 }
 
 function ViewFinder() {
-  const nav = useNavigate();
-  const onClose = useCallback(() => nav("/"), [nav]);
-
   return (
     <ScanOverlayWrap>
-      <CircleButton diameter={20} padding={16} onClick={onClose}>
-        <img src={icons.closeWhite} width={20} height={20} />
-      </CircleButton>
+      <CloseButton />
       <Guidebox>
         <Corner top left />
         <Corner top />
@@ -61,6 +97,10 @@ function ViewFinder() {
   );
 }
 
+const Orange = styled.span`
+  font-weight: bold;
+  color: orange;
+`;
 const ScanOverlayWrap = styled.div`
   position: absolute;
   top: 0;
@@ -68,6 +108,11 @@ const ScanOverlayWrap = styled.div`
   bottom: 0;
   right: 0;
   z-index: 1;
+  margin: 16px;
+`;
+
+const FullWidthRow = styled.div`
+  width: 100%;
 `;
 
 const Guidebox = styled.div`

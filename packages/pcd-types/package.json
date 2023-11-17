@@ -1,20 +1,22 @@
 {
   "name": "@pcd/pcd-types",
-  "version": "0.6.1",
+  "version": "0.8.0",
   "license": "MIT",
   "main": "./dist/index.js",
   "types": "./src/index.ts",
   "files": [
     "./src/*",
     "./dist/*",
-    "./README.md"
+    "./README.md",
+    "./LICENSE"
   ],
   "scripts": {
     "lint": "eslint \"**/*.ts{,x}\"",
     "build": "tsup src/index.ts",
     "dev": "tsup src/index.ts --watch",
     "typecheck": "yarn tsc --noEmit",
-    "prepublishOnly": "yarn build"
+    "prepublishOnly": "yarn build",
+    "clean": "rm -rf dist node_modules"
   },
   "devDependencies": {
     "@pcd/eslint-config-custom": "*",

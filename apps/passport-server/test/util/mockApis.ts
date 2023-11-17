@@ -1,15 +1,20 @@
 import chai from "chai";
-import { IDevconnectPretixAPI } from "../../src/apis/devconnect/devconnectPretixAPI";
+import { getDevconnectPretixAPI } from "../../src/apis/devconnect/devconnectPretixAPI";
 import { IEmailAPI } from "../../src/apis/emailAPI";
-import { IPretixAPI } from "../../src/apis/pretixAPI";
+import {
+  IZuconnectTripshaAPI,
+  getZuconnectTripshaAPI
+} from "../../src/apis/zuconnect/zuconnectTripshaAPI";
+import { IZuzaluPretixAPI } from "../../src/apis/zuzaluPretixAPI";
+import { DevconnectPretixAPIFactory } from "../../src/services/devconnectPretixSyncService";
 import { APIs } from "../../src/types";
-import { newMockDevconnectPretixAPI } from "../pretix/mockDevconnectPretixApi";
 import { newMockZuzaluPretixAPI } from "../pretix/mockPretixApi";
 
 export function mockAPIs(apiOverrides?: Partial<APIs>): APIs {
   let emailAPI: IEmailAPI | null;
-  let pretixAPI: IPretixAPI | null;
-  let devconnectPretixAPI: IDevconnectPretixAPI | null;
+  let pretixAPI: IZuzaluPretixAPI | null;
+  let devconnectPretixAPIFactory: DevconnectPretixAPIFactory | null;
+  let zuconnectTripshaAPI: IZuconnectTripshaAPI | null;
 
   if (apiOverrides?.emailAPI) {
     emailAPI = apiOverrides.emailAPI;
@@ -21,25 +26,31 @@ export function mockAPIs(apiOverrides?: Partial<APIs>): APIs {
     };
   }
 
-  if (emailAPI) {
+  if (emailAPI && chai.spy) {
     chai.spy.on(emailAPI, "send");
   }
 
-  if (apiOverrides?.pretixAPI) {
-    pretixAPI = apiOverrides.pretixAPI;
+  if (apiOverrides?.zuzaluPretixAPI) {
+    pretixAPI = apiOverrides.zuzaluPretixAPI;
   } else {
     pretixAPI = newMockZuzaluPretixAPI();
   }
 
-  if (apiOverrides?.devconnectPretixAPI) {
-    devconnectPretixAPI = apiOverrides.devconnectPretixAPI;
+  if (apiOverrides?.devconnectPretixAPIFactory) {
+    devconnectPretixAPIFactory = apiOverrides.devconnectPretixAPIFactory;
   } else {
-    devconnectPretixAPI = newMockDevconnectPretixAPI();
+    devconnectPretixAPIFactory = getDevconnectPretixAPI;
+  }
+  if (apiOverrides?.zuconnectTripshaAPI) {
+    zuconnectTripshaAPI = apiOverrides.zuconnectTripshaAPI;
+  } else {
+    zuconnectTripshaAPI = getZuconnectTripshaAPI();
   }
 
   return {
     emailAPI,
-    pretixAPI,
-    devconnectPretixAPI
+    zuzaluPretixAPI: pretixAPI,
+    devconnectPretixAPIFactory,
+    zuconnectTripshaAPI
   };
 }

@@ -4,7 +4,7 @@ import { icons } from "../icons";
 import { Button } from "./Button";
 import { BigInput } from "./Input";
 
-export { Button, BigInput, Spacer };
+export { BigInput, Button, Spacer };
 
 export const H1 = styled.h1<{ col?: string }>`
   color: ${(p) => p.col || "var(--accent-dark)"};
@@ -41,6 +41,13 @@ export const H5 = styled.h5<{ col?: string }>`
   font-weight: 400;
 `;
 
+export const Caption = styled.caption<{ col?: string }>`
+  color: ${(p) => p.col || "var(--white)"};
+  letter-spacing: 1px;
+  font-size: 14px;
+  font-weight: 500;
+`;
+
 export const InfoLine = styled.div`
   color: var(--primary-dark);
   letter-spacing: 0.5px;
@@ -54,8 +61,8 @@ export const HR = styled.hr`
   margin: 0 16px;
 `;
 
-export const CenterColumn = styled.div<{ w: number }>`
-  width: ${(p) => p.w + "px"};
+export const CenterColumn = styled.div<{ w?: number }>`
+  width: ${(p) => (p.w ?? 280) + "px"};
   margin: 0 auto;
 `;
 
@@ -83,20 +90,8 @@ export const PreWrap = styled.pre`
   overflow: hidden;
 `;
 
-export const BackgroundGlow = styled.div<{
-  y: number;
-  from: string;
-  to: string;
-}>`
-  width: 100%;
-  min-height: 100vh;
-  background: radial-gradient(
-    circle 160px at center ${(p) => p.y}px,
-    ${(p) => p.from},
-    ${(p) => p.to}
-  );
-`;
-
 export function ZuLogo() {
-  return <img src={icons.logo} width="160px" height="155px" />;
+  return (
+    <img draggable="false" src={icons.logo} width="160px" height="155px" />
+  );
 }

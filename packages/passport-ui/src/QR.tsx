@@ -1,7 +1,7 @@
 import { gzip, ungzip } from "pako";
 import qr from "qr-image";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import styled from "styled-components";
+import styled, { css } from "styled-components";
 
 export function encodeQRPayload(unencoded: string): string {
   console.log(`encoding payload with length ${unencoded.length}`);
@@ -33,7 +33,7 @@ export function QRDisplayWithRegenerateAndStorage({
   loadingLogo,
   loadedLogo,
   fgColor,
-  bgColor,
+  bgColor
 }: {
   generateQRPayload: () => Promise<string>;
   maxAgeMs: number;
@@ -54,11 +54,6 @@ export function QRDisplayWithRegenerateAndStorage({
     const savedState = JSON.parse(
       localStorage[uniqueId] || "{}"
     ) as Partial<SavedQRState>;
-    console.log(
-      `[QR] ('${uniqueId}') loaded saved state for ${uniqueId}: ${JSON.stringify(
-        savedState
-      )}`
-    );
 
     const { timestamp, payload } = savedState;
 
@@ -67,9 +62,6 @@ export function QRDisplayWithRegenerateAndStorage({
       Date.now() - timestamp < maxAgeMs &&
       payload !== undefined
     ) {
-      console.log(
-        `[QR] ('${uniqueId}') from localStorage, timestamp ${timestamp}`
-      );
       return { timestamp, payload: payload };
     }
 
@@ -79,12 +71,8 @@ export function QRDisplayWithRegenerateAndStorage({
   const maybeGenerateQR = useCallback(async () => {
     const timestamp = Date.now();
     if (savedState && timestamp - savedState.timestamp < regenerateAfterMs) {
-      console.log(
-        `[QR] ('${uniqueId}') not regenerating, timestamp ${timestamp}`
-      );
       return;
     }
-    console.log(`[QR] ('${uniqueId}') regenerating data ${timestamp}`);
     const newData = await generateQRPayload();
     const newSavedState: SavedQRState = { timestamp, payload: newData };
     localStorage[uniqueId] = JSON.stringify(newSavedState);
@@ -95,13 +83,15 @@ export function QRDisplayWithRegenerateAndStorage({
     maybeGenerateQR();
     const interval = setInterval(maybeGenerateQR, maxAgeMs / 10);
     return () => clearInterval(interval);
-  }, [maxAgeMs, maybeGenerateQR]);
+  }, [maxAgeMs, maybeGenerateQR, savedState]);
 
   const logoOverlay = useMemo(() => {
     return savedState ? loadedLogo : loadingLogo;
   }, [loadedLogo, loadingLogo, savedState]);
 
-  console.log(`[QR] ('${uniqueId}') rendering ${savedState?.payload}`);
+  useEffect(() => {
+    console.log("[QR] rendering ", savedState);
+  }, [savedState, savedState?.payload]);
 
   return (
     <QRDisplay
@@ -109,6 +99,7 @@ export function QRDisplayWithRegenerateAndStorage({
       value={savedState?.payload}
       fgColor={fgColor}
       bgColor={bgColor}
+      saved={!!savedState}
     />
   );
 }
@@ -118,14 +109,16 @@ export function QRDisplay({
   logoOverlay,
   fgColor,
   bgColor,
+  saved
 }: {
   value?: string;
   logoOverlay?: React.ReactNode;
   fgColor?: string;
   bgColor?: string;
+  saved: boolean;
 }) {
   return (
-    <QRWrap>
+    <QRWrap saved={saved}>
       {value !== undefined && (
         <QR
           value={value}
@@ -139,18 +132,19 @@ export function QRDisplay({
 }
 
 // Style constants
-const qrSize = "300px";
-const QRWrap = styled.div`
+const QRWrap = styled.div<{ saved: boolean }>`
+  ${({ saved }) => (saved ? css`` : css``)}
+  height: 0;
+  padding-bottom: 100%;
   position: relative;
-  width: ${qrSize};
-  height: ${qrSize};
   margin: 0 auto;
+  width: 100%;
 `;
 
 export function QR({
   value,
   fgColor,
-  bgColor,
+  bgColor
 }: {
   value: string;
   fgColor: string;
@@ -187,6 +181,7 @@ const Container = styled.div`
   height: 100% !important;
 
   svg {
+    position: absolute;
     width: 100%;
     height: 100%;
   }

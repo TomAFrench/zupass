@@ -14,7 +14,7 @@ import { getTicketData } from "./utils";
 
 export const RSAPCDTypeName = "rsa-ticket-pcd";
 
-export interface ITicketData {
+export interface IRSATicketData {
   timestamp?: number;
   eventName?: string;
   eventConfigId?: string;
@@ -35,10 +35,10 @@ async function init(args: RSATicketPCDInitArgs): Promise<void> {
   initArgs = args;
 }
 
-export interface RSATicketPCDArgs {
+export type RSATicketPCDArgs = {
   id: StringArgument;
   rsaPCD: PCDArgument<RSATicketPCD>;
-}
+};
 
 export interface RSATicketPCDClaim {}
 

@@ -1,5 +1,8 @@
 import { Pool } from "postgres-pool";
-import { DevconnectPretixTicket } from "../../models";
+import {
+  DevconnectPretixTicketWithCheckin,
+  DevconnectPretixTicketWithCheckinDB
+} from "../../models";
 import { sqlQuery } from "../../sqlQuery";
 
 /**
@@ -8,26 +11,33 @@ import { sqlQuery } from "../../sqlQuery";
  */
 export async function insertDevconnectPretixTicket(
   client: Pool,
-  params: DevconnectPretixTicket
-): Promise<DevconnectPretixTicket> {
+  params: DevconnectPretixTicketWithCheckin
+): Promise<DevconnectPretixTicketWithCheckinDB> {
   const result = await sqlQuery(
     client,
     `\
 insert into devconnect_pretix_tickets
-(email, full_name, devconnect_pretix_items_info_id, is_deleted, is_consumed, position_id, secret)
-values ($1, $2, $3, $4, $5, $6, $7)
-on conflict (position_id) do
+(email, full_name, devconnect_pretix_items_info_id, pretix_events_config_id,
+  is_deleted, is_consumed, position_id, secret, checker,
+  zupass_checkin_timestamp, pretix_checkin_timestamp)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+on conflict (pretix_events_config_id, position_id) do
 update set email = $1, full_name = $2, devconnect_pretix_items_info_id = $3,
-is_deleted = $4, is_consumed = $5, secret = $7
+pretix_events_config_id = $4, is_deleted = $5, is_consumed = $6, secret = $8,
+checker = $9, zupass_checkin_timestamp = $10, pretix_checkin_timestamp = $11
 returning *`,
     [
       params.email,
       params.full_name,
       params.devconnect_pretix_items_info_id,
+      params.pretix_events_config_id,
       params.is_deleted,
       params.is_consumed,
       params.position_id,
-      params.secret
+      params.secret,
+      params.checker,
+      params.zupass_checkin_timestamp,
+      params.pretix_checkin_timestamp
     ]
   );
   return result.rows[0];

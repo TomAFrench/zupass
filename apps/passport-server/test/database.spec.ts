@@ -1,26 +1,58 @@
+import {
+  EdDSAPublicKey,
+  getEdDSAPublicKey,
+  isEqualEdDSAPublicKey,
+  newEdDSAPrivateKey
+} from "@pcd/eddsa-pcd";
+import {
+  KnownPublicKeyType,
+  KnownTicketGroup,
+  LATEST_PRIVACY_NOTICE,
+  ZuzaluUserRole
+} from "@pcd/passport-interface";
 import { Identity } from "@semaphore-protocol/identity";
 import { expect } from "chai";
+import { randomUUID } from "crypto";
 import "mocha";
 import { step } from "mocha-steps";
 import { Pool } from "postgres-pool";
-import { ZuzaluPretixTicket, ZuzaluUserRole } from "../src/database/models";
+import {
+  KnownTicketTypeWithKey,
+  ZuzaluPretixTicket
+} from "../src/database/models";
 import { getDB } from "../src/database/postgresPool";
 import {
-  fetchAllCommitments,
-  fetchCommitment,
-  fetchCommitmentByPublicCommitment,
-  removeCommitment
-} from "../src/database/queries/commitments";
+  CacheEntry,
+  deleteExpiredCacheEntries,
+  getCacheSize,
+  getCacheValue,
+  setCacheValue
+} from "../src/database/queries/cache";
 import {
   fetchEncryptedStorage,
-  insertEncryptedStorage
+  rekeyEncryptedStorage,
+  setEncryptedStorage,
+  updateEncryptedStorage
 } from "../src/database/queries/e2ee";
 import {
   fetchEmailToken,
   insertEmailToken
 } from "../src/database/queries/emailToken";
-import { insertCommitment } from "../src/database/queries/saveCommitment";
-import { deleteZuzaluUser } from "../src/database/queries/zuzalu_pretix_tickets/deleteZuzaluUser";
+import {
+  deleteKnownTicketType,
+  fetchKnownTicketByEventAndProductId,
+  fetchKnownTicketTypesByGroup,
+  setKnownPublicKey,
+  setKnownTicketType
+} from "../src/database/queries/knownTicketTypes";
+import { upsertUser } from "../src/database/queries/saveUser";
+import {
+  deleteUserByEmail,
+  fetchAllUsers,
+  fetchUserByCommitment,
+  fetchUserByEmail
+} from "../src/database/queries/users";
+import { deleteZuzaluTicket } from "../src/database/queries/zuzalu_pretix_tickets/deleteZuzaluUser";
 import {
   fetchAllLoggedInZuzaluUsers,
   fetchLoggedInZuzaluUser,
@@ -28,8 +60,9 @@ import {
 } from "../src/database/queries/zuzalu_pretix_tickets/fetchZuzaluUser";
 import { insertZuzaluPretixTicket } from "../src/database/queries/zuzalu_pretix_tickets/insertZuzaluPretixTicket";
 import { updateZuzaluPretixTicket } from "../src/database/queries/zuzalu_pretix_tickets/updateZuzaluPretixTicket";
+import { sqlQuery } from "../src/database/sqlQuery";
 import { randomEmailToken } from "../src/util/util";
-import { overrideEnvironment, pcdpassTestingEnv } from "./util/env";
+import { overrideEnvironment, testingEnv } from "./util/env";
 import { randomEmail } from "./util/util";
 
 describe("database reads and writes", function () {
@@ -40,7 +73,7 @@ describe("database reads and writes", function () {
   let otherRole: ZuzaluUserRole;
 
   this.beforeAll(async () => {
-    await overrideEnvironment(pcdpassTestingEnv);
+    await overrideEnvironment(testingEnv);
     db = await getDB();
   });
 
@@ -99,9 +132,10 @@ describe("database reads and writes", function () {
     async function () {
       const newIdentity = new Identity();
       const newCommitment = newIdentity.commitment.toString();
-      const newUuid = await insertCommitment(db, {
+      const newUuid = await upsertUser(db, {
         email: testTicket.email,
-        commitment: newCommitment
+        commitment: newCommitment,
+        terms_agreed: LATEST_PRIVACY_NOTICE
       });
 
       const loggedinUser = await fetchLoggedInZuzaluUser(db, { uuid: newUuid });
@@ -133,7 +167,7 @@ describe("database reads and writes", function () {
     "able to fetch commitment separately from logged in user",
     async function () {
       const loggedinUser = await fetchZuzaluUser(db, testTicket.email);
-      const commitment = await fetchCommitment(db, testTicket.email);
+      const commitment = await fetchUserByEmail(db, testTicket.email);
 
       if (!loggedinUser || !commitment) {
         throw new Error("couldn't find user or commitment");
@@ -142,8 +176,8 @@ describe("database reads and writes", function () {
       expect(loggedinUser.commitment).to.eq(commitment.commitment);
       expect(loggedinUser.email).to.eq(commitment.email);
 
-      const allCommitments = await fetchAllCommitments(db);
-      expect(allCommitments).to.deep.eq([commitment]);
+      const allUsers = await fetchAllUsers(db);
+      expect(allUsers).to.deep.eq([commitment]);
     }
   );
 
@@ -178,54 +212,294 @@ describe("database reads and writes", function () {
     if (!loggedinUser || !loggedinUser.uuid) {
       throw new Error("expected there to be a logged in user");
     }
-    await deleteZuzaluUser(db, testTicket.email);
+    await deleteZuzaluTicket(db, testTicket.email);
     expect(await fetchZuzaluUser(db, testTicket.email)).to.eq(null);
     expect(
       await fetchLoggedInZuzaluUser(db, { uuid: loggedinUser.uuid })
     ).to.eq(null);
-    expect(await fetchCommitment(db, testTicket.email)).to.eq(null);
   });
 
   step("deleting a non logged in user should work", async function () {
     await insertZuzaluPretixTicket(db, testTicket);
     expect(await fetchZuzaluUser(db, testTicket.email)).to.not.eq(null);
-    await deleteZuzaluUser(db, testTicket.email);
+    await deleteZuzaluTicket(db, testTicket.email);
     expect(await fetchZuzaluUser(db, testTicket.email)).to.eq(null);
   });
 
   step("e2ee should work", async function () {
     const key = "key";
+    const initialStorage = await fetchEncryptedStorage(db, key);
+    expect(initialStorage).to.be.undefined;
+
     const value = "value";
-    await insertEncryptedStorage(db, key, value);
+    await setEncryptedStorage(db, key, value);
     const insertedStorage = await fetchEncryptedStorage(db, key);
     if (!insertedStorage) {
       throw new Error("expected to be able to fetch a e2ee blob");
     }
     expect(insertedStorage.blob_key).to.eq(key);
     expect(insertedStorage.encrypted_blob).to.eq(value);
+    expect(insertedStorage.revision).to.eq("1");
 
     const updatedValue = "value2";
     expect(value).to.not.eq(updatedValue);
-    await insertEncryptedStorage(db, key, updatedValue);
+    await setEncryptedStorage(db, key, updatedValue);
     const updatedStorage = await fetchEncryptedStorage(db, key);
     if (!updatedStorage) {
       throw new Error("expected to be able to fetch updated e2ee blog");
     }
     expect(updatedStorage.blob_key).to.eq(key);
     expect(updatedStorage.encrypted_blob).to.eq(updatedValue);
+    expect(updatedStorage.revision).to.eq("2");
+
+    // Storing an empty string is valid, and not treated as deletion.
+    const emptyValue = "";
+    expect(updatedValue).to.not.eq(emptyValue);
+    await setEncryptedStorage(db, key, emptyValue);
+    const emptyStorage = await fetchEncryptedStorage(db, key);
+    if (!emptyStorage) {
+      throw new Error("expected to be able to fetch updated e2ee blog");
+    }
+    expect(emptyStorage.blob_key).to.eq(key);
+    expect(emptyStorage.encrypted_blob).to.eq(emptyValue);
+    expect(emptyStorage.revision).to.eq("3");
+  });
+
+  step("e2ee update conflict detection should work", async function () {
+    const key = "ckey1";
+    const initialStorage = await fetchEncryptedStorage(db, key);
+    expect(initialStorage).to.be.undefined;
+
+    // Can't use "update" to set initial state.
+    const value1 = "value1";
+    const missingResult = await updateEncryptedStorage(db, key, value1, "0");
+    expect(missingResult.status).to.eq("missing");
+    expect(missingResult.revision).to.be.undefined;
+
+    // Use "set" to create rev1.
+    const rev1 = await setEncryptedStorage(db, key, value1);
+    expect(rev1).to.eq("1");
+    const insertedStorage = await fetchEncryptedStorage(db, key);
+    if (!insertedStorage) {
+      throw new Error("expected to be able to fetch a e2ee blob");
+    }
+    expect(insertedStorage.blob_key).to.eq(key);
+    expect(insertedStorage.encrypted_blob).to.eq(value1);
+    expect(insertedStorage.revision).to.eq("1");
+
+    // Can update to rev2.
+    const value2 = "value2";
+    const updateResult2 = await updateEncryptedStorage(db, key, value2, rev1);
+    expect(updateResult2.status).to.eq("updated");
+    expect(updateResult2.revision).to.eq("2");
+    const storage2 = await fetchEncryptedStorage(db, key);
+    if (!storage2) {
+      throw new Error("expected to be able to fetch a e2ee blob");
+    }
+    expect(storage2.blob_key).to.eq(key);
+    expect(storage2.encrypted_blob).to.eq(value2);
+    expect(storage2.revision).to.eq("2");
+    const rev2 = storage2.revision;
+
+    // Updating based on rev1 is a conflict, leaving storage unchanged.
+    const value3 = "value3";
+    const conflictResult = await updateEncryptedStorage(db, key, value3, rev1);
+    expect(conflictResult.status).to.eq("conflict");
+    expect(conflictResult.revision).to.eq("2");
+    const conflictStorage = await fetchEncryptedStorage(db, key);
+    if (!conflictStorage) {
+      throw new Error("expected to be able to fetch a e2ee blob");
+    }
+    expect(conflictStorage.blob_key).to.eq(key);
+    expect(conflictStorage.encrypted_blob).to.eq(value2);
+    expect(conflictStorage.revision).to.eq("2");
+
+    // Updating based on rev2 can succeed regardless of the previous conflict.
+    const updateResult3 = await updateEncryptedStorage(db, key, value2, rev2);
+    expect(updateResult3.status).to.eq("updated");
+    expect(updateResult3.revision).to.eq("3");
+    const storage3 = await fetchEncryptedStorage(db, key);
+    if (!storage3) {
+      throw new Error("expected to be able to fetch a e2ee blob");
+    }
+    expect(storage3.blob_key).to.eq(key);
+    expect(storage3.encrypted_blob).to.eq(value2);
+    expect(storage3.revision).to.eq("3");
+  });
+
+  step("e2ee rekeying should work", async function () {
+    const key1 = "key1";
+    const value1 = "value1";
+    const salt1 = "1234";
+
+    const email = "e2ee-rekey-user@test.com";
+    const commitment = new Identity().commitment.toString();
+    const uuid = await upsertUser(db, {
+      commitment,
+      email,
+      salt: salt1,
+      terms_agreed: LATEST_PRIVACY_NOTICE
+    });
+    if (!uuid) {
+      throw new Error("expected to be able to insert a commitment");
+    }
+
+    await setEncryptedStorage(db, key1, value1);
+    const storage1 = await fetchEncryptedStorage(db, key1);
+    if (!storage1) {
+      throw new Error("expected to be able to fetch 1st e2ee blob");
+    }
+    expect(storage1.blob_key).to.eq(key1);
+    expect(storage1.encrypted_blob).to.eq(value1);
+    expect(storage1.revision).to.eq("1");
+
+    const key2 = "key2";
+    const value2 = "value2";
+    const salt2 = "5678";
+
+    const rekeyResult = await rekeyEncryptedStorage(
+      db,
+      key1,
+      key2,
+      uuid,
+      salt2,
+      value2
+    );
+    expect(rekeyResult.status).to.eq("updated");
+    expect(rekeyResult.revision).to.eq("2");
+    const storage2 = await fetchEncryptedStorage(db, key2);
+    if (!storage2) {
+      throw new Error("expected to be able to fetch 2nd e2ee blob");
+    }
+    expect(storage2.blob_key).to.eq(key2);
+    expect(storage2.encrypted_blob).to.eq(value2);
+    expect(storage2.revision).to.eq("2");
+    const storageMissing = await fetchEncryptedStorage(db, key1);
+    if (storageMissing) {
+      throw new Error("expected 1st e2ee blob to be gone");
+    }
+
+    // We can't rekey again because key doesn't match.
+    const rekeyResult2 = await rekeyEncryptedStorage(
+      db,
+      key1,
+      key2,
+      uuid,
+      salt2,
+      value2
+    );
+    expect(rekeyResult2.status).to.eq("missing");
+    expect(rekeyResult2.revision).to.be.undefined;
+  });
+
+  step("e2ee rekeying should work with knownRevision", async function () {
+    const key1 = "rkey1";
+    const value1 = "value1";
+    const value2 = "value2";
+    const salt1 = "1234";
+
+    const email = "e2ee-rekey-user@test.com";
+    const commitment = new Identity().commitment.toString();
+    const uuid = await upsertUser(db, {
+      commitment,
+      email,
+      salt: salt1,
+      terms_agreed: LATEST_PRIVACY_NOTICE
+    });
+    if (!uuid) {
+      throw new Error("expected to be able to insert a commitment");
+    }
+
+    // Set storage rev1
+    const rev1 = await setEncryptedStorage(db, key1, value1);
+    expect(rev1).to.eq("1");
+    const storage1 = await fetchEncryptedStorage(db, key1);
+    if (!storage1) {
+      throw new Error("expected to be able to fetch 1st e2ee blob");
+    }
+    expect(storage1.blob_key).to.eq(key1);
+    expect(storage1.encrypted_blob).to.eq(value1);
+    expect(storage1.revision).to.eq("1");
+
+    // Set storage rev2
+    const rev2 = await setEncryptedStorage(db, key1, value2);
+    expect(rev2).to.eq("2");
+    const storage2 = await fetchEncryptedStorage(db, key1);
+    if (!storage2) {
+      throw new Error("expected to be able to fetch 1st e2ee blob");
+    }
+    expect(storage2.blob_key).to.eq(key1);
+    expect(storage2.encrypted_blob).to.eq(value2);
+    expect(storage2.revision).to.eq("2");
+
+    const key2 = "rkey2";
+    const value3 = "value3";
+    const salt2 = "5678";
+
+    // Attempt to rekey based on rev1, causing conflict without changing rev
+    const rekeyResult1 = await rekeyEncryptedStorage(
+      db,
+      key1,
+      key2,
+      uuid,
+      salt2,
+      value3,
+      rev1
+    );
+    expect(rekeyResult1.status).to.eq("conflict");
+    expect(rekeyResult1.revision).to.eq("2");
+
+    // Rekey successfully based on rev2
+    const rekeyResult2 = await rekeyEncryptedStorage(
+      db,
+      key1,
+      key2,
+      uuid,
+      salt2,
+      value3,
+      rev2
+    );
+    expect(rekeyResult2.status).to.eq("updated");
+    expect(rekeyResult2.revision).to.eq("3");
+    const rev3 = rekeyResult2.revision;
+    const storageRekeyed = await fetchEncryptedStorage(db, key2);
+    if (!storageRekeyed) {
+      throw new Error("expected to be able to fetch 2nd e2ee blob");
+    }
+    expect(storageRekeyed.blob_key).to.eq(key2);
+    expect(storageRekeyed.encrypted_blob).to.eq(value3);
+    expect(storageRekeyed.revision).to.eq("3");
+    const storageMissing = await fetchEncryptedStorage(db, key1);
+    if (storageMissing) {
+      throw new Error("expected 1st e2ee blob to be gone");
+    }
+
+    // We can't rekey again because key doesn't match.
+    const rekeyResult3 = await rekeyEncryptedStorage(
+      db,
+      key1,
+      key2,
+      uuid,
+      salt2,
+      value2,
+      rev3
+    );
+    expect(rekeyResult3.status).to.eq("missing");
+    expect(rekeyResult3.revision).to.be.undefined;
   });
 
   step("pcdpass user representation should work", async function () {
     const email = "pcdpassuser@test.com";
     const commitment = new Identity().commitment.toString();
-    const uuid = await insertCommitment(db, {
+    const uuid = await upsertUser(db, {
       commitment,
-      email
+      email,
+      terms_agreed: LATEST_PRIVACY_NOTICE
     });
     if (!uuid) {
       throw new Error("expected to be able to insert a commitment");
     }
-    const insertedCommitment = await fetchCommitment(db, email);
+    const insertedCommitment = await fetchUserByEmail(db, email);
     if (!insertedCommitment) {
       throw new Error("expected to be able to fetch an inserted commitment");
     }
@@ -233,12 +507,288 @@ describe("database reads and writes", function () {
     expect(insertedCommitment.email).to.eq(email);
     expect(insertedCommitment.uuid).to.eq(uuid);
 
-    expect(await fetchCommitmentByPublicCommitment(db, commitment)).to.deep.eq(
+    expect(await fetchUserByCommitment(db, commitment)).to.deep.eq(
       insertedCommitment
     );
 
-    await removeCommitment(db, email);
-    const deletedCommitment = await fetchCommitment(db, email);
+    await deleteUserByEmail(db, email);
+    const deletedCommitment = await fetchUserByEmail(db, email);
     expect(deletedCommitment).to.eq(null);
+  });
+
+  step("should be able to interact with the cache", async function () {
+    // insert a bunch of old entries
+    const oldEntries: CacheEntry[] = [];
+    for (let i = 0; i < 20; i++) {
+      oldEntries.push(await setCacheValue(db, "i_" + i, i + ""));
+    }
+    await sqlQuery(
+      db,
+      `
+    update cache
+      set time_created = NOW() - interval '5 days',
+      time_updated = NOW() - interval '5 days'
+    `
+    );
+
+    // old entries inserted, let's insert some 'new' ones
+    await setCacheValue(db, "key", "value");
+    const firstEntry = await getCacheValue(db, "key");
+    expect(firstEntry?.cache_value).to.eq("value");
+    await setCacheValue(db, "key", "value2");
+    const editedFirstEntry = await getCacheValue(db, "key");
+    expect(editedFirstEntry?.cache_value).to.eq("value2");
+    expect(editedFirstEntry?.time_created?.getTime()).to.eq(
+      firstEntry?.time_created?.getTime()
+    );
+
+    await setCacheValue(db, "spongebob", "squarepants");
+    const spongebob = await getCacheValue(db, "spongebob");
+    expect(spongebob?.cache_value).to.eq("squarepants");
+
+    // age nothing out
+    const beforeFirstAgeOut = await getCacheSize(db);
+    expect(beforeFirstAgeOut).to.eq(22);
+    const firstDeleteCount = await deleteExpiredCacheEntries(db, 10, 22);
+    expect(firstDeleteCount).to.eq(0);
+    const afterFirstAgeOut = await getCacheSize(db);
+    expect(afterFirstAgeOut).to.eq(beforeFirstAgeOut);
+
+    // age entries older than 10 days or entries that are not one of the 20
+    // most recently added entries
+    const beforeSecondAgeOut = await getCacheSize(db);
+    const secondDeleteCount = await deleteExpiredCacheEntries(db, 10, 20);
+    expect(secondDeleteCount).to.eq(2);
+    const afterSecondAgeOut = await getCacheSize(db);
+    expect(afterSecondAgeOut).to.eq(beforeSecondAgeOut - 2);
+
+    // age entries older than 3 days or entries that are not one of the 20
+    // most recently added entries
+    const beforeThirdAgeOut = await getCacheSize(db);
+    const thirdDeleteCount = await deleteExpiredCacheEntries(db, 3, 20);
+    expect(thirdDeleteCount).to.eq(18);
+    const afterThirdAgeOut = await getCacheSize(db);
+    expect(afterThirdAgeOut).to.eq(beforeThirdAgeOut - 18);
+  });
+
+  const testPublicKeyName = "Zupass Test";
+  const eddsaPubKeyPromise = getEdDSAPublicKey(
+    testingEnv.SERVER_EDDSA_PRIVATE_KEY as string
+  );
+
+  step("should be able to insert known public keys", async function () {
+    const eddsaPubKey = await eddsaPubKeyPromise;
+
+    await setKnownPublicKey(
+      db,
+      testPublicKeyName,
+      KnownPublicKeyType.EdDSA,
+      JSON.stringify(eddsaPubKey)
+    );
+
+    const inserted = (
+      await sqlQuery(
+        db,
+        `select * from known_public_keys where public_key_name = $1`,
+        [testPublicKeyName]
+      )
+    ).rows[0];
+    expect(inserted.public_key_name).to.eq(testPublicKeyName);
+    expect(inserted.public_key_type).to.eq(KnownPublicKeyType.EdDSA);
+    expect(JSON.parse(inserted.public_key)).to.deep.eq(eddsaPubKey);
+    expect(isEqualEdDSAPublicKey(JSON.parse(inserted.public_key), eddsaPubKey))
+      .to.be.true;
+  });
+
+  step("should be able to replace known public keys", async function () {
+    const eddsaPubKey = await eddsaPubKeyPromise;
+    const dummyEddsaPubKey = await getEdDSAPublicKey(newEdDSAPrivateKey());
+
+    // Replace the public key with a different one, but use the same name
+    // and type
+    await setKnownPublicKey(
+      db,
+      testPublicKeyName,
+      KnownPublicKeyType.EdDSA,
+      JSON.stringify(dummyEddsaPubKey)
+    );
+
+    let result = await sqlQuery(
+      db,
+      `select * from known_public_keys where public_key_name = $1`,
+      [testPublicKeyName]
+    );
+    let publicKeyInDB = result.rows[0];
+
+    // There should still only be one key with the used name
+    expect(result.rowCount).to.eq(1);
+    expect(publicKeyInDB.public_key_name).to.eq(testPublicKeyName);
+    expect(publicKeyInDB.public_key_type).to.eq(KnownPublicKeyType.EdDSA);
+    expect(JSON.parse(publicKeyInDB.public_key)).to.deep.eq(dummyEddsaPubKey);
+    expect(
+      isEqualEdDSAPublicKey(
+        JSON.parse(publicKeyInDB.public_key),
+        dummyEddsaPubKey
+      )
+    ).to.be.true;
+
+    // Restore the original public key
+    await setKnownPublicKey(
+      db,
+      testPublicKeyName,
+      KnownPublicKeyType.EdDSA,
+      JSON.stringify(eddsaPubKey)
+    );
+
+    result = await sqlQuery(
+      db,
+      `select * from known_public_keys where public_key_name = $1`,
+      [testPublicKeyName]
+    );
+    publicKeyInDB = result.rows[0];
+
+    // There should still only be one key with the used name
+    expect(result.rowCount).to.eq(1);
+    expect(publicKeyInDB.public_key_name).to.eq(testPublicKeyName);
+    expect(publicKeyInDB.public_key_type).to.eq(KnownPublicKeyType.EdDSA);
+    expect(JSON.parse(publicKeyInDB.public_key)).to.deep.eq(eddsaPubKey);
+    expect(
+      isEqualEdDSAPublicKey(JSON.parse(publicKeyInDB.public_key), eddsaPubKey)
+    ).to.be.true;
+  });
+
+  const knownEventId = randomUUID();
+  const knownProductId = randomUUID();
+  const ticketTypeIdentifier = "ZUCONNECT_TEST";
+
+  step("should be able to insert known ticket type", async function () {
+    const eddsaPubKey = await eddsaPubKeyPromise;
+
+    await setKnownTicketType(
+      db,
+      ticketTypeIdentifier,
+      knownEventId,
+      knownProductId,
+      testPublicKeyName,
+      KnownPublicKeyType.EdDSA,
+      KnownTicketGroup.Zuconnect23
+    );
+
+    const knownTicketType = (await fetchKnownTicketByEventAndProductId(
+      db,
+      knownEventId,
+      knownProductId
+    )) as KnownTicketTypeWithKey;
+
+    expect(knownTicketType.event_id).to.eq(knownEventId);
+    expect(knownTicketType.product_id).to.eq(knownProductId);
+    expect(knownTicketType.known_public_key_name).to.eq(testPublicKeyName);
+    expect(knownTicketType.known_public_key_type).to.eq(
+      KnownPublicKeyType.EdDSA
+    );
+    expect(JSON.parse(knownTicketType.public_key)).to.deep.eq(eddsaPubKey);
+    expect(
+      isEqualEdDSAPublicKey(
+        JSON.parse(knownTicketType.public_key) as EdDSAPublicKey,
+        eddsaPubKey
+      )
+    );
+  });
+
+  step("should be able to replace known ticket type", async function () {
+    const eddsaPubKey = await eddsaPubKeyPromise;
+    const newProductId = randomUUID(),
+      newEventId = randomUUID();
+
+    // Change the ticket type created in the previous test
+    await setKnownTicketType(
+      db,
+      ticketTypeIdentifier,
+      newEventId,
+      newProductId,
+      testPublicKeyName,
+      KnownPublicKeyType.EdDSA,
+      KnownTicketGroup.Zuconnect23
+    );
+
+    let knownTicketType = await fetchKnownTicketByEventAndProductId(
+      db,
+      knownEventId,
+      knownProductId
+    );
+
+    expect(knownTicketType).to.be.null;
+
+    const changedTicketType = (await fetchKnownTicketByEventAndProductId(
+      db,
+      newEventId,
+      newProductId
+    )) as KnownTicketTypeWithKey;
+
+    expect(changedTicketType.event_id).to.eq(newEventId);
+    expect(changedTicketType.product_id).to.eq(newProductId);
+    expect(changedTicketType.known_public_key_name).to.eq(testPublicKeyName);
+    expect(changedTicketType.known_public_key_type).to.eq(
+      KnownPublicKeyType.EdDSA
+    );
+    expect(JSON.parse(changedTicketType.public_key)).to.deep.eq(eddsaPubKey);
+    expect(
+      isEqualEdDSAPublicKey(
+        JSON.parse(changedTicketType.public_key) as EdDSAPublicKey,
+        eddsaPubKey
+      )
+    );
+
+    // Restore the ticket type to the original value
+    await setKnownTicketType(
+      db,
+      ticketTypeIdentifier,
+      knownEventId,
+      knownProductId,
+      testPublicKeyName,
+      KnownPublicKeyType.EdDSA,
+      KnownTicketGroup.Zuconnect23
+    );
+
+    knownTicketType = (await fetchKnownTicketByEventAndProductId(
+      db,
+      knownEventId,
+      knownProductId
+    )) as KnownTicketTypeWithKey;
+
+    expect(knownTicketType.event_id).to.eq(knownEventId);
+    expect(knownTicketType.product_id).to.eq(knownProductId);
+    expect(knownTicketType.known_public_key_name).to.eq(testPublicKeyName);
+    expect(knownTicketType.known_public_key_type).to.eq(
+      KnownPublicKeyType.EdDSA
+    );
+    expect(JSON.parse(knownTicketType.public_key)).to.deep.eq(eddsaPubKey);
+    expect(
+      isEqualEdDSAPublicKey(
+        JSON.parse(knownTicketType.public_key) as EdDSAPublicKey,
+        eddsaPubKey
+      )
+    );
+  });
+
+  step("should be able to fetch known ticket type by group", async function () {
+    const ticketTypes = await fetchKnownTicketTypesByGroup(
+      db,
+      KnownTicketGroup.Zuconnect23
+    );
+
+    expect(ticketTypes.length).to.eq(1);
+    expect(ticketTypes[0].ticket_group).to.eq(KnownTicketGroup.Zuconnect23);
+  });
+
+  step("should be able to delete known ticket types", async function () {
+    await deleteKnownTicketType(db, ticketTypeIdentifier);
+
+    const ticketTypes = await fetchKnownTicketTypesByGroup(
+      db,
+      KnownTicketGroup.Zuconnect23
+    );
+
+    expect(ticketTypes.length).to.eq(0);
   });
 });

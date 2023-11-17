@@ -1,5 +1,94 @@
 # @pcd/passport-interface
 
+## 0.8.0
+
+### Minor Changes
+
+- new package versions
+
+### Patch Changes
+
+- Updated dependencies
+  - @pcd/eddsa-ticket-pcd@0.3.0
+  - @pcd/emitter@0.2.0
+  - @pcd/passport-crypto@0.8.0
+  - @pcd/pcd-collection@0.8.0
+  - @pcd/pcd-types@0.8.0
+  - @pcd/rsa-ticket-pcd@0.3.0
+  - @pcd/semaphore-group-pcd@0.8.0
+  - @pcd/semaphore-identity-pcd@0.8.0
+  - @pcd/semaphore-signature-pcd@0.8.0
+  - @pcd/util@0.2.0
+
+## 0.7.2
+
+### Patch Changes
+
+- publish new versions of packages
+- Updated dependencies
+  - @pcd/eddsa-ticket-pcd@0.2.2
+  - @pcd/emitter@0.1.2
+  - @pcd/passport-crypto@0.7.2
+  - @pcd/pcd-collection@0.7.2
+  - @pcd/pcd-types@0.7.2
+  - @pcd/rsa-ticket-pcd@0.2.2
+  - @pcd/semaphore-group-pcd@0.7.2
+  - @pcd/semaphore-identity-pcd@0.7.2
+  - @pcd/semaphore-signature-pcd@0.7.2
+  - @pcd/util@0.1.2
+
+## 0.7.1
+
+### Patch Changes
+
+- new package versions.
+- Updated dependencies
+  - @pcd/eddsa-ticket-pcd@0.2.1
+  - @pcd/emitter@0.1.1
+  - @pcd/passport-crypto@0.7.1
+  - @pcd/pcd-collection@0.7.1
+  - @pcd/pcd-types@0.7.1
+  - @pcd/rsa-ticket-pcd@0.2.1
+  - @pcd/semaphore-group-pcd@0.7.1
+  - @pcd/semaphore-identity-pcd@0.7.1
+  - @pcd/semaphore-signature-pcd@0.7.1
+  - @pcd/util@0.1.1
+  - @pcd/webauthn-pcd@0.7.1
+
+## 0.7.0
+
+### Minor Changes
+
+- bundle of package upgrades
+
+### Patch Changes
+
+- Updated dependencies
+  - @pcd/eddsa-ticket-pcd@0.2.0
+  - @pcd/emitter@0.1.0
+  - @pcd/passport-crypto@0.7.0
+  - @pcd/pcd-collection@0.7.0
+  - @pcd/pcd-types@0.7.0
+  - @pcd/semaphore-group-pcd@0.7.0
+  - @pcd/semaphore-identity-pcd@0.7.0
+  - @pcd/semaphore-signature-pcd@0.7.0
+  - @pcd/util@0.1.0
+
+## 0.6.2
+
+### Patch Changes
+
+- eddsa pcds
+- Updated dependencies
+  - @pcd/eddsa-ticket-pcd@0.1.1
+  - @pcd/passport-crypto@0.6.2
+  - @pcd/pcd-types@0.6.3
+  - @pcd/rsa-ticket-pcd@0.1.2
+  - @pcd/semaphore-group-pcd@0.6.2
+  - @pcd/semaphore-identity-pcd@0.6.2
+  - @pcd/semaphore-signature-pcd@0.6.2
+  - @pcd/webauthn-pcd@0.6.2
+
 ## 0.6.1
 
 ### Patch Changes

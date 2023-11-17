@@ -1,18 +1,24 @@
+import {
+  EdDSATicketPCD,
+  TicketCategory,
+  isEdDSATicketPCD
+} from "@pcd/eddsa-ticket-pcd";
+import { ZUCONNECT_23_DAY_PASS_PRODUCT_ID } from "@pcd/passport-interface";
 import { PCD } from "@pcd/pcd-types";
 import React, { useCallback, useContext, useMemo } from "react";
 import styled from "styled-components";
-import { appConfig } from "../../src/appConfig";
-import { usePCDCollection, useSelf } from "../../src/appHooks";
+import { usePCDCollection } from "../../src/appHooks";
 import { StateContext } from "../../src/dispatch";
 import { usePackage } from "../../src/usePackage";
-import { getVisitorStatus, VisitorStatus } from "../../src/user";
 import { Button, H4, Spacer, TextCenter } from "../core";
 import { MainIdentityCard } from "./MainIdentityCard";
+import { DevconnectCardBody } from "./cards/DevconnectTicket";
+import { ZKTicketPCDCard } from "./cards/ZKTicket";
 
 export const PCDCard = React.memo(PCDCardImpl);
 
 /**
- * Shows a card in the Passport wallet. If expanded, the full card, otherwise
+ * Shows a card representing a PCD in Zupass. If expanded, the full card, otherwise
  * just the top of the card to allow stacking.
  */
 function PCDCardImpl({
@@ -68,7 +74,6 @@ function HeaderContent({
   pcd: PCD;
   isMainIdentity: boolean;
 }) {
-  const self = useSelf();
   const pcdPackage = usePackage(pcd);
 
   const displayOptions = useMemo(() => {
@@ -78,26 +83,18 @@ function HeaderContent({
   }, [pcd, pcdPackage]);
 
   let header;
-  if (isMainIdentity && !appConfig.isZuzalu) {
-    header = "PCDPASS IDENTITY";
-  } else if (isMainIdentity) {
-    const visitorStatus = getVisitorStatus(self);
-
-    if (
-      visitorStatus.isVisitor &&
-      visitorStatus.status === VisitorStatus.Expired
-    ) {
-      header = "EXPIRED";
-    } else if (
-      visitorStatus.isVisitor &&
-      visitorStatus.status === VisitorStatus.Upcoming
-    ) {
-      header = "UPCOMING";
-    } else {
-      header = "VERIFIED ZUZALU PASSPORT";
-    }
+  if (isMainIdentity) {
+    header = "ZUPASS IDENTITY";
   } else if (displayOptions?.header) {
     header = displayOptions.header.toUpperCase();
+  }
+
+  if (
+    isEdDSATicketPCD(pcd) &&
+    pcd.claim.ticket.ticketCategory === TicketCategory.ZuConnect &&
+    pcd.claim.ticket.productId === ZUCONNECT_23_DAY_PASS_PRODUCT_ID
+  ) {
+    header = "ZUCONNECT '23 DAY PASS";
   }
 
   const headerContent = header ? (
@@ -143,6 +140,14 @@ function CardFooterImpl({
   );
 }
 
+function TicketCardBody({ pcd }: { pcd: EdDSATicketPCD }) {
+  if (pcd.claim.ticket.ticketCategory === TicketCategory.Devconnect) {
+    return <DevconnectCardBody pcd={pcd} />;
+  }
+
+  return <ZKTicketPCDCard pcd={pcd} />;
+}
+
 function CardBody({
   pcd,
   isMainIdentity
@@ -153,7 +158,15 @@ function CardBody({
   const pcdCollection = usePCDCollection();
 
   if (isMainIdentity) {
-    return <MainIdentityCard showQrCode={appConfig.isZuzalu} />;
+    return <MainIdentityCard />;
+  }
+
+  if (
+    isEdDSATicketPCD(pcd) &&
+    (pcd.claim.ticket.ticketCategory === TicketCategory.Devconnect ||
+      pcd.claim.ticket.ticketCategory === TicketCategory.ZuConnect)
+  ) {
+    return <TicketCardBody pcd={pcd} />;
   }
 
   if (pcdCollection.hasPackage(pcd.type)) {
@@ -177,7 +190,7 @@ function CardBody({
 
 export const CardContainerExpanded = styled.div`
   width: 100%;
-  padding: 0 8px;
+  padding: 8px;
 `;
 
 const CardContainerCollapsed = styled(CardContainerExpanded)`

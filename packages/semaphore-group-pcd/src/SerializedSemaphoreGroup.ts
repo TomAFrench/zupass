@@ -5,6 +5,7 @@ export interface SerializedSemaphoreGroup {
   name: string;
   members: string[];
   depth: number;
+  zeroValue: string;
 }
 
 export function serializeSemaphoreGroup(
@@ -16,6 +17,7 @@ export function serializeSemaphoreGroup(
     name,
     members: group.members.map((m) => m.toString()),
     depth: group.depth,
+    zeroValue: group.zeroValue.toString()
   };
 }
 

@@ -3,53 +3,80 @@ import { startDiscordService } from "./services/discordService";
 import { startE2EEService } from "./services/e2eeService";
 import { startEmailService } from "./services/emailService";
 import { startEmailTokenService } from "./services/emailTokenService";
+import { startFrogcryptoService } from "./services/frogcryptoService";
 import { startIssuanceService } from "./services/issuanceService";
+import { startKudosbotService } from "./services/kudosbotService";
 import { startMetricsService } from "./services/metricsService";
-import { startPretixSyncService } from "./services/pretixSyncService";
+import { startMultiProcessService } from "./services/multiProcessService";
+import { startPersistentCacheService } from "./services/persistentCacheService";
 import { startProvingService } from "./services/provingService";
 import { startRollbarService } from "./services/rollbarService";
 import { startSemaphoreService } from "./services/semaphoreService";
+import { startTelegramService } from "./services/telegramService";
 import { startTelemetry } from "./services/telemetryService";
 import { startUserService } from "./services/userService";
+import { startZuconnectTripshaSyncService } from "./services/zuconnectTripshaSyncService";
+import { startZuzaluPretixSyncService } from "./services/zuzaluPretixSyncService";
 import { APIs, ApplicationContext, GlobalServices } from "./types";
+import { instrumentPCDs } from "./util/instrumentPCDs";
 
 export async function startServices(
   context: ApplicationContext,
   apis: APIs
 ): Promise<GlobalServices> {
   await startTelemetry(context);
+  instrumentPCDs();
+
+  const multiprocessService = startMultiProcessService();
   const discordService = await startDiscordService();
-  const rollbarService = startRollbarService();
+  const rollbarService = startRollbarService(context);
+  const telegramService = await startTelegramService(context, rollbarService);
+  const kudosbotService = await startKudosbotService(context, rollbarService);
   const provingService = await startProvingService(rollbarService);
-  const emailService = startEmailService(
-    context,
-    rollbarService,
-    apis.emailAPI
-  );
+  const emailService = startEmailService(context, apis.emailAPI);
   const emailTokenService = startEmailTokenService(context);
   const semaphoreService = startSemaphoreService(context);
-  const pretixSyncService = startPretixSyncService(
+  const zuzaluPretixSyncService = startZuzaluPretixSyncService(
     context,
     rollbarService,
     semaphoreService,
-    apis.pretixAPI
+    apis.zuzaluPretixAPI
   );
   const devconnectPretixSyncService = await startDevconnectPretixSyncService(
     context,
     rollbarService,
     semaphoreService,
-    apis.devconnectPretixAPI
+    apis.devconnectPretixAPIFactory
+  );
+  const zuconnectTripshaSyncService = await startZuconnectTripshaSyncService(
+    context,
+    rollbarService,
+    semaphoreService,
+    apis.zuconnectTripshaAPI
   );
   const userService = startUserService(
     context,
     semaphoreService,
     emailTokenService,
-    emailService,
+    emailService
+  );
+  const e2eeService = startE2EEService(context);
+  const metricsService = startMetricsService(context, rollbarService);
+  const persistentCacheService = startPersistentCacheService(
+    context.dbPool,
     rollbarService
   );
-  const e2eeService = startE2EEService(context, rollbarService);
-  const metricsService = startMetricsService(context, rollbarService);
-  const issuanceService = startIssuanceService(context);
+  const issuanceService = await startIssuanceService(
+    context,
+    persistentCacheService,
+    rollbarService,
+    multiprocessService
+  );
+  const frogcryptoService = await startFrogcryptoService(
+    context,
+    rollbarService,
+    issuanceService
+  );
   const services: GlobalServices = {
     semaphoreService,
     userService,
@@ -57,11 +84,17 @@ export async function startServices(
     emailTokenService,
     rollbarService,
     provingService,
-    pretixSyncService,
+    zuzaluPretixSyncService,
     devconnectPretixSyncService,
+    zuconnectTripshaSyncService,
     metricsService,
     issuanceService,
-    discordService
+    discordService,
+    telegramService,
+    kudosbotService,
+    frogcryptoService,
+    persistentCacheService,
+    multiprocessService
   };
   return services;
 }
@@ -69,6 +102,14 @@ export async function startServices(
 export async function stopServices(services: GlobalServices): Promise<void> {
   services.provingService.stop();
   services.semaphoreService.stop();
-  services.pretixSyncService?.stop();
+  services.zuzaluPretixSyncService?.stop();
   services.metricsService.stop();
+  services.telegramService?.stop();
+  services.kudosbotService?.stop();
+  services.persistentCacheService.stop();
+  services.devconnectPretixSyncService?.stop();
+  services.zuconnectTripshaSyncService?.stop();
+  services.frogcryptoService?.stop();
+  await services.discordService?.stop();
+  await services.multiprocessService.stop();
 }

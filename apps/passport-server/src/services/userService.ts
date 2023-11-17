@@ -1,227 +1,125 @@
-import { User, ZuzaluUserRole } from "@pcd/passport-interface";
+import { HexString } from "@pcd/passport-crypto";
+import {
+  AgreeTermsResult,
+  ConfirmEmailResponseValue,
+  LATEST_PRIVACY_NOTICE,
+  UNREDACT_TICKETS_TERMS_VERSION,
+  ZupassUserJson
+} from "@pcd/passport-interface";
+import { SerializedPCD } from "@pcd/pcd-types";
+import {
+  SemaphoreSignaturePCD,
+  SemaphoreSignaturePCDPackage
+} from "@pcd/semaphore-signature-pcd";
+import { ONE_HOUR_MS, ZUPASS_SUPPORT_EMAIL } from "@pcd/util";
 import { Response } from "express";
-import { LoggedinPCDPassUser, ZuzaluUser } from "../database/models";
-import { fetchCommitment } from "../database/queries/commitments";
+import { z } from "zod";
+import { UserRow } from "../database/models";
+import { agreeTermsAndUnredactTickets } from "../database/queries/devconnect_pretix_tickets/devconnectPretixRedactedTickets";
 import {
-  fetchDevconnectDeviceLoginTicket,
-  fetchDevconnectSuperusersForEmail
-} from "../database/queries/devconnect_pretix_tickets/fetchDevconnectPretixTicket";
-import { insertCommitment } from "../database/queries/saveCommitment";
+  updateUserAccountRestTimestamps,
+  upsertUser
+} from "../database/queries/saveUser";
 import {
-  fetchAllZuzaluUsers,
-  fetchZuzaluUser
-} from "../database/queries/zuzalu_pretix_tickets/fetchZuzaluUser";
-import { insertZuzaluPretixTicket } from "../database/queries/zuzalu_pretix_tickets/insertZuzaluPretixTicket";
+  fetchUserByCommitment,
+  fetchUserByEmail,
+  fetchUserByUUID
+} from "../database/queries/users";
+import { PCDHTTPError } from "../routing/pcdHttpError";
 import { ApplicationContext } from "../types";
 import { logger } from "../util/logger";
 import { validateEmail } from "../util/util";
+import { userRowToZupassUserJson } from "../util/zuzaluUser";
 import { EmailService } from "./emailService";
 import { EmailTokenService } from "./emailTokenService";
-import { RollbarService } from "./rollbarService";
 import { SemaphoreService } from "./semaphoreService";
+
+const AgreedTermsSchema = z.object({
+  version: z.number().max(LATEST_PRIVACY_NOTICE)
+});
 
 /**
  * Responsible for high-level user-facing functionality like logging in.
  */
 export class UserService {
-  private context: ApplicationContext;
-  private semaphoreService: SemaphoreService;
-  private emailTokenService: EmailTokenService;
-  private emailService: EmailService;
-  private rollbarService: RollbarService | null;
-  private _bypassEmail: boolean;
-
-  public get bypassEmail(): boolean {
-    return this._bypassEmail;
-  }
+  public readonly bypassEmail: boolean;
+  private readonly context: ApplicationContext;
+  private readonly semaphoreService: SemaphoreService;
+  private readonly emailTokenService: EmailTokenService;
+  private readonly emailService: EmailService;
 
   public constructor(
     context: ApplicationContext,
     semaphoreService: SemaphoreService,
     emailTokenService: EmailTokenService,
-    emailService: EmailService,
-    rollbarService: RollbarService | null
+    emailService: EmailService
   ) {
     this.context = context;
     this.semaphoreService = semaphoreService;
     this.emailTokenService = emailTokenService;
     this.emailService = emailService;
-    this.rollbarService = rollbarService;
-    this._bypassEmail =
+    this.bypassEmail =
       process.env.BYPASS_EMAIL_REGISTRATION === "true" &&
       process.env.NODE_ENV !== "production";
   }
 
-  public async getZuzaluPassportHolder(
+  public async getSaltByEmail(email: string): Promise<string | null> {
+    const user = await this.getUserByEmail(email);
+
+    if (!user) {
+      throw new PCDHTTPError(404, `user ${email} does not exist`);
+    }
+
+    return user.salt;
+  }
+
+  /**
+   * Returns the encryption key for a given user, if it is stored on
+   * our server. Returns null if the user does not exist, or if
+   * the user does not have an encryption key stored on the server.
+   */
+  public async getEncryptionKeyForUser(
     email: string
-  ): Promise<ZuzaluUser | null> {
-    return fetchZuzaluUser(this.context.dbPool, email);
+  ): Promise<HexString | null> {
+    const existingUser = await fetchUserByEmail(this.context.dbPool, email);
+    return existingUser?.encryption_key ?? null;
   }
 
-  public async getZuzaluTicketHolders(): Promise<Array<ZuzaluUser>> {
-    return fetchAllZuzaluUsers(this.context.dbPool);
-  }
-
-  public async handleSendZuzaluEmail(
+  public async handleSendTokenEmail(
     email: string,
     commitment: string,
     force: boolean,
     res: Response
   ): Promise<void> {
     logger(
-      `[ZUID] send-login-email ${JSON.stringify({ email, commitment, force })}`
-    );
-
-    if (!validateEmail(email)) {
-      const errMsg = `'${email}' is not a valid email`;
-      logger(errMsg);
-      res.status(500).send(errMsg);
-      return;
-    }
-
-    const { dbPool } = this.context;
-
-    const token = await this.emailTokenService.saveNewTokenForEmail(email);
-
-    if (this._bypassEmail) {
-      await insertZuzaluPretixTicket(dbPool, {
-        email: email,
-        name: "Test User",
-        order_id: "",
-        role: ZuzaluUserRole.Resident,
-        visitor_date_ranges: undefined
-      });
-    }
-
-    const user = await fetchZuzaluUser(dbPool, email);
-
-    if (user == null) {
-      const errMsg = `${email} doesn't have a ticket.`;
-      logger(errMsg);
-      res.status(500).send(errMsg);
-      return;
-    } else if (user.commitment != null && !force) {
-      const errMsg = `${email} already registered.`;
-      logger("[ZUID]", errMsg);
-      res.status(500).send(errMsg);
-      return;
-    }
-    const stat = user.commitment == null ? "NEW" : "EXISTING";
-    logger(
-      `Saved login token for ${stat} email=${email} commitment=${commitment}`
-    );
-
-    // Send an email with the login token.
-    if (this._bypassEmail) {
-      logger("[DEV] Bypassing email, returning token");
-
-      res.json({ token });
-    } else {
-      const { name } = user;
-      logger(`[ZUID] Sending token=${token} to email=${email} name=${name}`);
-      await this.emailService.sendPretixEmail(email, name, token);
-
-      res.sendStatus(200);
-    }
-  }
-
-  public async handleNewZuzaluUser(
-    emailToken: string,
-    email: string,
-    commitment: string,
-    res: Response
-  ): Promise<void> {
-    const { dbPool } = this.context;
-    logger(
-      `[ZUID] new-user ${JSON.stringify({
-        emailToken,
+      `[USER_SERVICE] send-token-email ${JSON.stringify({
         email,
-        commitment
+        commitment,
+        force
       })}`
     );
 
-    try {
-      const user = await fetchZuzaluUser(dbPool, email);
-
-      if (user == null) {
-        throw new Error(`Ticket for ${email} not found`);
-      } else if (
-        !(await this.emailTokenService.checkTokenCorrect(email, emailToken))
-      ) {
-        throw new Error(
-          `Wrong token. If you got more than one email, use the latest one.`
-        );
-      } else if (user.email !== email) {
-        throw new Error(`Email mismatch.`);
-      }
-
-      // Save commitment to DB.
-      logger(`[ZUID] Saving new commitment: ${commitment}`);
-      const uuid = await insertCommitment(dbPool, {
-        email,
-        commitment
-      });
-
-      // Reload Merkle trees
-      await this.semaphoreService.reload();
-      const newUser = await this.semaphoreService.getUserByUUID(uuid);
-      if (newUser == null) {
-        throw new Error(`${uuid} not found`);
-      } else if (newUser.commitment !== commitment) {
-        throw new Error(`Commitment mismatch`);
-      }
-
-      // Return user, including UUID, back to Passport
-      const zuzaluUser = newUser as User;
-      const jsonP = JSON.stringify(zuzaluUser);
-      logger(`[ZUID] Added new Zuzalu user: ${jsonP}`);
-
-      res.json(zuzaluUser);
-    } catch (e: any) {
-      logger(e);
-      this.rollbarService?.reportError(e);
-      res.status(500).send(e.message);
+    if (!validateEmail(email)) {
+      throw new PCDHTTPError(400, `'${email}' is not a valid email`);
     }
-  }
 
-  public async handleGetZuzaluUser(uuid: string, res: Response): Promise<void> {
-    logger(`[ZUID] Fetching user ${uuid}`);
-    const user = await this.semaphoreService.getUserByUUID(uuid);
-    if (!user) res.status(404);
-    res.json(user || null);
-  }
-
-  public async handleSendPcdPassEmail(
-    email: string,
-    commitment: string,
-    force: boolean,
-    res: Response
-  ): Promise<void> {
-    logger(
-      `[ZUID] send-login-email ${JSON.stringify({ email, commitment, force })}`
+    const newEmailToken = await this.emailTokenService.saveNewTokenForEmail(
+      email
     );
 
-    const devBypassEmail =
-      process.env.BYPASS_EMAIL_REGISTRATION === "true" &&
-      process.env.NODE_ENV !== "production";
-
-    if (!validateEmail(email)) {
-      const errMsg = `'${email}' is not a valid email`;
-      logger(errMsg);
-      res.status(500).send(errMsg);
-      return;
-    }
-
-    const token = await this.emailTokenService.saveNewTokenForEmail(email);
-
-    const existingCommitment = await fetchCommitment(
+    const existingCommitment = await fetchUserByEmail(
       this.context.dbPool,
       email
     );
 
-    if (existingCommitment != null && !force) {
-      res.status(500).send(`${email} already registered.`);
-      return;
+    if (
+      existingCommitment != null &&
+      !force &&
+      // Users with an `encryption_key` do not have a password,
+      // so we will need to verify email ownership with code.
+      !existingCommitment.encryption_key
+    ) {
+      throw new PCDHTTPError(403, `'${email}' already registered`);
     }
 
     logger(
@@ -230,138 +128,271 @@ export class UserService {
       } email=${email} commitment=${commitment}`
     );
 
-    // Send an email with the login token.
-    if (devBypassEmail) {
+    if (this.bypassEmail) {
       logger("[DEV] Bypassing email, returning token");
-      res.json({ token });
-    } else {
-      logger(`[ZUID] Sending token=${token} to email=${email}`);
-      await this.emailService.sendPCDPassEmail(email, token);
-      res.sendStatus(200);
+      res.status(200).json({
+        devToken: newEmailToken
+      } satisfies ConfirmEmailResponseValue);
+      return;
     }
+
+    logger(`[USER_SERVICE] Sending token=${newEmailToken} to email=${email}`);
+    await this.emailService.sendTokenEmail(email, newEmailToken);
+
+    res.sendStatus(200);
   }
 
-  public async handleNewPcdPassUser(
+  /**
+   * Checks whether allowing a user to reset their account one more time
+   * would cause them to exceed the account reset rate limit. If it does,
+   * throws an error. If it doesn't, saves this account reset timestamp
+   * to the database and proceeds. Can only be called on users that have
+   * already created an account.
+   */
+  private async checkAndIncrementAccountRateLimit(
+    user: UserRow
+  ): Promise<void> {
+    if (process.env.ACCOUNT_RESET_RATE_LIMIT_DISABLED === "true") {
+      logger("[USER_SERVICE] account rate limit disabled");
+      return;
+    }
+
+    const now = Date.now();
+    const configuredRateLimitDurationMs = parseInt(
+      process.env.ACCOUNT_RESET_LIMIT_DURATION_MS ?? "",
+      10
+    );
+    const configuredAccountResetQuantity = parseInt(
+      process.env.ACCOUNT_RESET_LIMIT_QUANTITY ?? "",
+      10
+    );
+    const defaultRateLimitDurationMs = ONE_HOUR_MS * 24; // default 24 hours
+    const defaultRateLimitQuantity = 5; // default max 5 resets (not including 1st time account creation) in 24 hours
+    const rateLimitDurationMs = isNaN(configuredRateLimitDurationMs)
+      ? defaultRateLimitDurationMs
+      : configuredRateLimitDurationMs;
+    const rateLimitQuantity = isNaN(configuredAccountResetQuantity)
+      ? defaultRateLimitQuantity
+      : configuredAccountResetQuantity;
+
+    const parsedTimestamps: number[] = user.account_reset_timestamps.map((t) =>
+      new Date(t).getTime()
+    );
+
+    parsedTimestamps.push(now);
+
+    const maxAgeTimestamp = now - rateLimitDurationMs;
+    const resetsNewerThanMaxAge = parsedTimestamps.filter(
+      (t) => t > maxAgeTimestamp
+    );
+    const exceedsRateLimit = resetsNewerThanMaxAge.length > rateLimitQuantity;
+
+    if (exceedsRateLimit) {
+      throw new PCDHTTPError(
+        429,
+        "You've exceeded the maximum number of account resets." +
+          ` Please contact ${ZUPASS_SUPPORT_EMAIL} for further assistance.`
+      );
+    }
+
+    await updateUserAccountRestTimestamps(
+      this.context.dbPool,
+      user.email,
+      resetsNewerThanMaxAge.map((t) => new Date(t).toISOString())
+    );
+  }
+
+  public async handleNewUser(
     token: string,
     email: string,
     commitment: string,
+    salt: string | undefined,
+    encryptionKey: string | undefined,
     res: Response
   ): Promise<void> {
     logger(
-      `[ZUID] new-user ${JSON.stringify({
+      `[USER_SERVICE] new-user ${JSON.stringify({
         token,
         email,
         commitment
       })}`
     );
 
-    try {
-      if (!(await this.emailTokenService.checkTokenCorrect(email, token))) {
-        throw new Error(
-          `Wrong token. If you got more than one email, use the latest one.`
-        );
-      }
-
-      // Save commitment to DB.
-      logger(`[ZUID] Saving new commitment: ${commitment}`);
-      await insertCommitment(this.context.dbPool, { email, commitment });
-
-      // Reload Merkle trees
-      await this.semaphoreService.reload();
-
-      // Return user, including UUID, back to Passport
-      const commitmentRow = await fetchCommitment(this.context.dbPool, email);
-
-      if (!commitmentRow) {
-        throw new Error("no user with that email exists");
-      }
-
-      const superuserPrivilages = await fetchDevconnectSuperusersForEmail(
-        this.context.dbPool,
-        commitmentRow.email
+    if ((!salt && !encryptionKey) || (salt && encryptionKey)) {
+      throw new PCDHTTPError(
+        400,
+        "Must have exactly either salt or encryptionKey, but not both or none."
       );
-
-      const pcdpassUser: LoggedinPCDPassUser = {
-        ...commitmentRow,
-        superuserEventConfigIds: superuserPrivilages.map(
-          (s) => s.pretix_events_config_id
-        )
-      };
-
-      const jsonP = JSON.stringify(pcdpassUser);
-      logger(`[ZUID] logged in a zuzalu user: ${jsonP}`);
-      res.json(pcdpassUser);
-    } catch (e) {
-      logger(e);
-      this.rollbarService?.reportError(e);
-      res.sendStatus(500);
     }
+
+    if (!(await this.emailTokenService.checkTokenCorrect(email, token))) {
+      throw new PCDHTTPError(
+        403,
+        `Wrong token. If you got more than one email, use the latest one.`
+      );
+    }
+
+    const existingUser = await fetchUserByEmail(this.context.dbPool, email);
+    if (existingUser) {
+      await this.checkAndIncrementAccountRateLimit(existingUser);
+    }
+
+    await this.emailTokenService.saveNewTokenForEmail(email);
+
+    logger(`[USER_SERVICE] Saving commitment: ${commitment}`);
+    await upsertUser(this.context.dbPool, {
+      email,
+      commitment,
+      salt,
+      encryptionKey,
+      // If the user already exists, then they're accessing this via the
+      // "forgot password" flow, and not the registration flow in which they
+      // are prompted to agree to the latest legal terms. In this case,
+      // preserve whichever version they already agreed to.
+      terms_agreed: existingUser
+        ? existingUser.terms_agreed
+        : LATEST_PRIVACY_NOTICE
+    });
+
+    // Reload Merkle trees
+    this.semaphoreService.scheduleReload();
+
+    const user = await fetchUserByEmail(this.context.dbPool, email);
+    if (!user) {
+      throw new PCDHTTPError(403, "no user with that email exists");
+    }
+
+    // Slightly redundantly, this will set the "terms agreed" again
+    // However, having a single canonical transaction for this seems like
+    // a benefit
+    logger(`[USER_SERVICE] Unredacting tickets for email`, user.email);
+    await agreeTermsAndUnredactTickets(
+      this.context.dbPool,
+      user.email,
+      LATEST_PRIVACY_NOTICE
+    );
+
+    const userJson = userRowToZupassUserJson(user);
+
+    logger(`[USER_SERVICE] logged in a user`, userJson);
+    res.status(200).json(userJson satisfies ZupassUserJson);
   }
 
-  public async handleGetPcdPassUser(
-    uuid: string,
-    res: Response
-  ): Promise<void> {
-    logger(`[ZUID] Fetching user ${uuid}`);
-    const user = await this.semaphoreService.getUserByUUID(uuid);
-    if (!user) res.status(404);
-    res.json(user || null);
+  /**
+   * If the service is not ready, returns a 500 server error.
+   * If the user does not exist, returns a 404.
+   * Otherwise returns the user.
+   */
+  public async handleGetUser(uuid: string, res: Response): Promise<void> {
+    logger(`[USER_SERVICE] Fetching user ${uuid}`);
+
+    const user = await this.getUserByUUID(uuid);
+
+    if (!user) {
+      throw new PCDHTTPError(410, `no user with uuid '${uuid}'`);
+    }
+
+    const userJson = userRowToZupassUserJson(user);
+
+    res.status(200).json(userJson);
   }
 
-  public async handleNewDeviceLogin(
-    secret: string,
-    email: string,
-    commitment: string,
-    res: Response
-  ): Promise<void> {
-    try {
-      const ticket = await fetchDevconnectDeviceLoginTicket(
-        this.context.dbPool,
-        email,
-        secret
-      );
+  /**
+   * Returns either the user, or null if no user with the given uuid can be found.
+   */
+  public async getUserByUUID(uuid: string): Promise<UserRow | null> {
+    const user = await fetchUserByUUID(this.context.dbPool, uuid);
 
-      if (!ticket) {
-        const err = `Secret key is not valid, or no such device login exists.`;
-        logger(err);
-        this.rollbarService?.reportError(err);
-        res.status(500).send(err);
-        return;
-      }
-
-      logger(`[ZUID] Saving new commitment: ${commitment}`);
-      await insertCommitment(this.context.dbPool, { email, commitment });
-
-      // Reload Merkle trees
-      await this.semaphoreService.reload();
-
-      // Return user, including UUID, back to Passport
-      const commitmentRow = await fetchCommitment(this.context.dbPool, email);
-
-      if (!commitmentRow) {
-        throw new Error("no user with that email exists");
-      }
-
-      const superuserPrivilages = await fetchDevconnectSuperusersForEmail(
-        this.context.dbPool,
-        commitmentRow.email
-      );
-
-      const pcdpassUser: LoggedinPCDPassUser = {
-        ...commitmentRow,
-        superuserEventConfigIds: superuserPrivilages.map(
-          (s) => s.pretix_events_config_id
-        )
-      };
-
-      const jsonP = JSON.stringify(pcdpassUser);
-      logger(`[ZUID] logged in a device login user: ${jsonP}`);
-      res.json(pcdpassUser);
-    } catch (e) {
-      logger(e);
-      this.rollbarService?.reportError(e);
-      res.sendStatus(500);
+    if (!user) {
+      logger("[SEMA] no user with that email exists");
+      return null;
     }
+    return user;
+  }
+
+  /**
+   * Gets a user by email address, or null if no user with that email exists.
+   */
+  public async getUserByEmail(email: string): Promise<UserRow | null> {
+    const user = await fetchUserByEmail(this.context.dbPool, email);
+
+    if (!user) {
+      logger("[SEMA] no user with that email exists");
+      return null;
+    }
+
+    return user;
+  }
+
+  /**
+   * Updates the version of the legal terms the user agrees to
+   */
+  public async handleAgreeTerms(
+    serializedPCD: SerializedPCD<SemaphoreSignaturePCD>
+  ): Promise<AgreeTermsResult> {
+    const pcd = await SemaphoreSignaturePCDPackage.deserialize(
+      serializedPCD.pcd
+    );
+    if (!(await SemaphoreSignaturePCDPackage.verify(pcd))) {
+      return {
+        success: false,
+        error: "Invalid signature"
+      };
+    }
+
+    const parsedPayload = AgreedTermsSchema.safeParse(
+      JSON.parse(pcd.claim.signedMessage)
+    );
+
+    if (!parsedPayload.success) {
+      return {
+        success: false,
+        error: "Invalid terms specified"
+      };
+    }
+
+    const payload = parsedPayload.data;
+    const user = await fetchUserByCommitment(
+      this.context.dbPool,
+      pcd.claim.identityCommitment
+    );
+    if (!user) {
+      return {
+        success: false,
+        error: "User does not exist"
+      };
+    }
+
+    // If the user hasn't already agreed to have their tickets unredacted,
+    // do it now
+    if (
+      payload.version >= UNREDACT_TICKETS_TERMS_VERSION &&
+      user.terms_agreed < UNREDACT_TICKETS_TERMS_VERSION
+    ) {
+      logger(
+        `[USER_SERVICE] Unredacting tickets for email due to accepting version ${payload.version} of legal terms`,
+        user.email
+      );
+      await agreeTermsAndUnredactTickets(
+        this.context.dbPool,
+        user.email,
+        payload.version
+      );
+    } else {
+      logger(
+        `[USER_SERVICE] Updating user to version ${payload.version} of legal terms`,
+        user.email
+      );
+      await upsertUser(this.context.dbPool, {
+        ...user,
+        terms_agreed: payload.version
+      });
+    }
+
+    return {
+      success: true,
+      value: { version: payload.version }
+    };
   }
 }
 
@@ -369,15 +400,12 @@ export function startUserService(
   context: ApplicationContext,
   semaphoreService: SemaphoreService,
   emailTokenService: EmailTokenService,
-  emailService: EmailService,
-  rollbarService: RollbarService | null
+  emailService: EmailService
 ): UserService {
-  const userService = new UserService(
+  return new UserService(
     context,
     semaphoreService,
     emailTokenService,
-    emailService,
-    rollbarService
+    emailService
   );
-  return userService;
 }

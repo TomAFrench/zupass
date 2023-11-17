@@ -1,17 +1,32 @@
 import {
+  ISSUANCE_STRING,
   PendingPCD,
   ProveOptions,
-  ProveRequest
+  requestProveOnServer
 } from "@pcd/passport-interface";
-import { ArgsOf, PCDOf, PCDPackage, SerializedPCD } from "@pcd/pcd-types";
-import { useCallback, useState } from "react";
+import {
+  ArgsOf,
+  PCDOf,
+  PCDPackage,
+  SerializedPCD,
+  isPCDArgument
+} from "@pcd/pcd-types";
+import {
+  SemaphoreSignaturePCDPackage,
+  SemaphoreSignaturePCDTypeName
+} from "@pcd/semaphore-signature-pcd";
+import { getErrorMessage } from "@pcd/util";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import styled from "styled-components";
-import { requestPendingPCD } from "../../../src/api/requestPendingPCD";
+import { appConfig } from "../../../src/appConfig";
 import { usePCDCollection } from "../../../src/appHooks";
+import { getOutdatedBrowserErrorMessage } from "../../../src/devconnectUtils";
+import { OUTDATED_BROWSER_ERROR_MESSAGE } from "../../../src/sharedConstants";
 import { useAppRollbar } from "../../../src/useAppRollbar";
 import { nextFrame } from "../../../src/util";
-import { Button, H1, Spacer } from "../../core";
+import { Button } from "../../core";
 import { RippleLoader } from "../../core/RippleLoader";
+import { ErrorContainer } from "../../core/error";
 import { PCDArgs } from "../../shared/PCDArgs";
 
 /**
@@ -35,74 +50,120 @@ export function GenericProveSection<T extends PCDPackage = PCDPackage>({
 }) {
   const rollbar = useAppRollbar();
   const pcds = usePCDCollection();
-  const [args, setArgs] = useState(JSON.parse(JSON.stringify(initialArgs)));
-  const [error, setError] = useState<Error | undefined>();
+  const [args, setArgs] = useState<ArgsOf<T>>(
+    JSON.parse(JSON.stringify(initialArgs))
+  );
+  const [error, setError] = useState<string | undefined>();
   const [proving, setProving] = useState(false);
   const pcdPackage = pcds.getPackage<T>(pcdType);
 
+  useEffect(() => {
+    setError(undefined);
+  }, [args]);
+
+  const isProveReady = useMemo(
+    () =>
+      !Object.entries(args).find(
+        ([_, arg]) =>
+          // only PCD arguments are required
+          isPCDArgument(arg) && !arg.value
+      ),
+    [args]
+  );
+
   const onProveClick = useCallback(async () => {
-    try {
-      setProving(true);
+    setProving(true);
+    setError(undefined);
 
-      // Give the UI has a chance to update to the 'loading' state before the
-      // potentially blocking proving operation kicks off
-      await nextFrame();
+    // Give the UI has a chance to update to the 'loading' state before the
+    // potentially blocking proving operation kicks off
+    await nextFrame();
 
-      if (options?.proveOnServer === true) {
-        const serverReq: ProveRequest = {
+    if (pcdType === SemaphoreSignaturePCDTypeName) {
+      const signatureArgs = args as ArgsOf<typeof SemaphoreSignaturePCDPackage>;
+      if (signatureArgs?.signedMessage?.value === ISSUANCE_STRING) {
+        setError("Can't sign this message");
+        setProving(false);
+        return;
+      }
+    }
+
+    if (options?.proveOnServer === true) {
+      const pendingPCDResult = await requestProveOnServer(
+        appConfig.zupassServer,
+        {
           pcdType: pcdType,
           args: args
-        };
-        const pendingPCD = await requestPendingPCD(serverReq);
-        onProve(undefined, undefined, pendingPCD);
-      } else {
-        const pcd = await pcdPackage.prove(args);
-        const serialized = await pcdPackage.serialize(pcd);
-        onProve(pcd as any, serialized, undefined);
-      }
-    } catch (e) {
-      console.log(e);
-      rollbar?.error(e);
-      setError(e);
+        }
+      );
       setProving(false);
+
+      if (!pendingPCDResult.success) {
+        rollbar?.error(pendingPCDResult.error);
+        if (pendingPCDResult.error.includes(OUTDATED_BROWSER_ERROR_MESSAGE)) {
+          setError(getOutdatedBrowserErrorMessage());
+        } else {
+          setError(pendingPCDResult.error);
+        }
+        return;
+      }
+
+      onProve(undefined, undefined, pendingPCDResult.value);
+    } else {
+      try {
+        const pcd = await pcdPackage.prove(args);
+        const serializedPCD = await pcdPackage.serialize(pcd);
+        onProve(pcd as any, serializedPCD, undefined);
+      } catch (e) {
+        const errorMessage = getErrorMessage(e);
+        if (errorMessage.includes(OUTDATED_BROWSER_ERROR_MESSAGE)) {
+          setError(getOutdatedBrowserErrorMessage());
+        } else {
+          setError(errorMessage);
+        }
+        // NB: Only re-enable the 'Prove' button if there was an error. If
+        // the proving operation succeeded, we want to leave the button
+        // disabled while onProve redirects user.
+        setProving(false);
+      }
     }
   }, [options?.proveOnServer, pcdType, args, onProve, pcdPackage, rollbar]);
 
-  const pageTitle = options?.title ?? "Prove " + pcdType;
-
   return (
-    <>
-      <H1>🔑 &nbsp; {pageTitle}</H1>
-      {options?.description && (
-        <>
-          <Spacer h={16} />
-          <p>{options.description}</p>
-        </>
-      )}
+    <Container>
+      {options?.description && <Description>{options.description}</Description>}
 
-      <Spacer h={24} />
       {options?.debug && <pre>{JSON.stringify(args, null, 2)}</pre>}
-      <PCDArgs args={args} setArgs={setArgs} pcdCollection={pcds} />
-      <Spacer h={16} />
-      {error && (
-        <>
-          <ErrorContainer>{error.message}</ErrorContainer>
-          <Spacer h={16} />
-        </>
-      )}
+
+      <PCDArgs
+        args={args}
+        setArgs={setArgs}
+        options={pcdPackage.getProveDisplayOptions?.()?.defaultArgs}
+      />
+
+      {error && <ErrorContainer>{error}</ErrorContainer>}
+
       {proving ? (
         <RippleLoader />
       ) : (
-        <Button onClick={onProveClick}>Prove</Button>
+        <Button disabled={!isProveReady} onClick={onProveClick}>
+          Prove
+        </Button>
       )}
-    </>
+    </Container>
   );
 }
 
-const ErrorContainer = styled.div`
-  padding: 16px;
-  background-color: white;
-  color: var(--danger);
-  border-radius: 16px;
-  border: 1px solid var(--danger);
+const Description = styled.div`
+  font-size: 14px;
+  color: rgba(var(--white-rgb), 0.8);
+`;
+
+const Container = styled.div`
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  padding: 16px 8px;
+  gap: 16px;
+  width: 100%;
 `;

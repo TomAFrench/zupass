@@ -1,7 +1,3 @@
-import JSONBig from "json-bigint";
-import { v4 as uuid } from "uuid";
-import { Proof, RLN, RLNFullProof } from "rlnjs";
-import { Identity } from "@semaphore-protocol/identity";
 import {
   BigIntArgument,
   ObjectArgument,
@@ -9,17 +5,21 @@ import {
   PCDArgument,
   PCDPackage,
   SerializedPCD,
-  StringArgument,
+  StringArgument
 } from "@pcd/pcd-types";
 import {
-  SemaphoreIdentityPCD,
-  SemaphoreIdentityPCDPackage,
-} from "@pcd/semaphore-identity-pcd";
-import {
-  deserializeSemaphoreGroup,
   SerializedSemaphoreGroup,
+  deserializeSemaphoreGroup
 } from "@pcd/semaphore-group-pcd";
-
+import {
+  SemaphoreIdentityPCD,
+  SemaphoreIdentityPCDPackage
+} from "@pcd/semaphore-identity-pcd";
+import { requireDefinedParameter } from "@pcd/util";
+import { Identity } from "@semaphore-protocol/identity";
+import JSONBig from "json-bigint";
+import { Proof, RLN, RLNFullProof } from "rlnjs";
+import { v4 as uuid } from "uuid";
 import verificationKeyJSON from "../artifacts/16.json";
 
 let initArgs: RLNPCDInitArgs | undefined = undefined;
@@ -32,7 +32,7 @@ export interface RLNPCDInitArgs {
 }
 
 // Ref: https://github.com/Rate-Limiting-Nullifier/rlnjs/blob/97fe15e04428c6adf81dbc856859e07527a063c9/src/types.ts#L59-L66
-export interface RLNPCDArgs {
+export type RLNPCDArgs = {
   // Identifier of the app. Every app using RLN should use a unique identifier.
   rlnIdentifier: BigIntArgument;
   // The semaphore keypair for a user
@@ -43,7 +43,7 @@ export interface RLNPCDArgs {
   signal: StringArgument;
   // The timestamp the message is sent
   epoch: BigIntArgument;
-}
+};
 
 // https://rate-limiting-nullifier.github.io/rln-docs/protocol_spec.html#technical-side-of-rln
 export interface RLNPCDClaim {
@@ -87,11 +87,11 @@ export class RLNPCD implements PCD<RLNPCDClaim, RLNPCDProof> {
       rlnIdentifier: rlnFullProof.rlnIdentifier,
       yShare: BigInt(publicSignals.yShare),
       merkleRoot: BigInt(publicSignals.merkleRoot),
-      internalNullifier: BigInt(publicSignals.internalNullifier),
+      internalNullifier: BigInt(publicSignals.internalNullifier)
     };
     const proof: RLNPCDProof = {
       proof: rlnFullProof.snarkProof.proof,
-      externalNullifier: BigInt(publicSignals.externalNullifier),
+      externalNullifier: BigInt(publicSignals.externalNullifier)
     };
     return new RLNPCD(uuid(), claim, proof);
   }
@@ -105,11 +105,11 @@ export class RLNPCD implements PCD<RLNPCDClaim, RLNPCDProof> {
           merkleRoot: this.claim.merkleRoot,
           internalNullifier: this.claim.internalNullifier,
           signalHash: this.claim.x,
-          externalNullifier: this.proof.externalNullifier,
-        },
+          externalNullifier: this.proof.externalNullifier
+        }
       },
       epoch: this.claim.epoch,
-      rlnIdentifier: this.claim.rlnIdentifier,
+      rlnIdentifier: this.claim.rlnIdentifier
     };
   }
 }
@@ -206,15 +206,20 @@ function getRLNInstance(rlnIdentifier: bigint, identity?: Identity) {
 export async function serialize(pcd: RLNPCD): Promise<SerializedPCD<RLNPCD>> {
   return {
     type: RLNPCDTypeName,
-    pcd: JSONBig({ useNativeBigInt: true }).stringify(pcd),
+    pcd: JSONBig({ useNativeBigInt: true }).stringify(pcd)
   } as SerializedPCD<RLNPCD>;
 }
 
 export async function deserialize(serialized: string): Promise<RLNPCD> {
-  const parsed = JSONBig({ useNativeBigInt: true }).parse(serialized);
-  const proof = parsed.proof;
-  const claim = parsed.claim;
-  return new RLNPCD(parsed.id, claim, proof);
+  const { id, claim, proof } = JSONBig({ useNativeBigInt: true }).parse(
+    serialized
+  );
+
+  requireDefinedParameter(id, "id");
+  requireDefinedParameter(claim, "claim");
+  requireDefinedParameter(proof, "proof");
+
+  return new RLNPCD(id, claim, proof);
 }
 
 /**
@@ -232,5 +237,5 @@ export const RLNPCDPackage: PCDPackage<
   prove,
   verify,
   serialize,
-  deserialize,
+  deserialize
 };

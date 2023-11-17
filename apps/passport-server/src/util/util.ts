@@ -1,15 +1,9 @@
+import { exec } from "child_process";
 import validator from "email-validator";
+import { promisify } from "util";
+import { logger } from "./logger";
 
-/**
- * Returns a promise that resolves after `ms` milliseconds.
- */
-export async function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(() => {
-      resolve();
-    }, ms);
-  });
-}
+export const execAsync = promisify(exec);
 
 /**
  * Ensures a given environment variable exists by throwing an error
@@ -31,23 +25,6 @@ export function normalizeEmail(email: string): string {
 }
 
 /**
- * Decodes a given string from an object `s` and optionally valides it.
- */
-export function decodeString(
-  s: any,
-  name: string,
-  predicate?: (s: string) => boolean
-): string {
-  if (s == null) {
-    throw new Error(`Missing ${name}`);
-  }
-  if (typeof s !== "string" || (predicate && !predicate(s))) {
-    throw new Error(`Invalid ${name}`);
-  }
-  return decodeURIComponent(s);
-}
-
-/**
  * Generate a random 6-digit random token for use as a token.
  */
 export function randomEmailToken(): string {
@@ -58,4 +35,103 @@ export function randomEmailToken(): string {
 
 export function validateEmail(email: string): boolean {
   return validator.validate(email);
+}
+
+export async function getCommitHash(): Promise<string> {
+  try {
+    const result = await execAsync("git rev-parse HEAD", {
+      cwd: process.cwd()
+    });
+    return result.stdout.trim();
+  } catch (e) {
+    logger("couldn't get commit hash", e);
+  }
+
+  return "unknown commit hash";
+}
+
+export async function getCommitMessage(): Promise<string> {
+  try {
+    const result = await execAsync('git show -s --format="%s"', {
+      cwd: process.cwd()
+    });
+    return result.stdout.trim();
+  } catch (e) {
+    logger("couldn't get commit message", e);
+  }
+
+  return "unknown commit message";
+}
+
+export function isLocalServer(): boolean {
+  return (
+    process.env.PASSPORT_SERVER_URL === "http://localhost:3002" ||
+    process.env.PASSPORT_SERVER_URL === "https://dev.local:3002"
+  );
+}
+
+export function checkSlidingWindowRateLimit(
+  timestamps: number[],
+  maxRequestCount: number,
+  timeWindowMs: number
+): { rateLimitExceeded: boolean; newTimestamps: string[] } {
+  const currentTime = Date.now();
+  timestamps.push(currentTime);
+
+  const startTime = currentTime - timeWindowMs;
+  const requestsSinceStartTime = timestamps.filter((t) => t > startTime);
+
+  return {
+    rateLimitExceeded: requestsSinceStartTime.length > maxRequestCount,
+    newTimestamps: requestsSinceStartTime.map((t) => new Date(t).toISOString())
+  };
+}
+
+/**
+ * Compares two arrays representing existing and potentially new or updated
+ * items. Returns three arrays: new items, which are present in `b` but not
+ * in `a`; updated items, which are present but different in both; and removed
+ * items which are present in `a` but not in `b`.
+ *
+ * Takes two arrays to compare, an identifier which specifies a field on the
+ * array items to use as a unique identifier, and a comparator function for
+ * comparing items.
+ *
+ * Type T is the type of the item in the array, and I is the identifier
+ * property.
+ */
+export function compareArrays<T>(
+  a: T[],
+  b: T[],
+  identifier: keyof T,
+  comparator: (a: T, b: T) => boolean
+): {
+  new: T[];
+  updated: T[];
+  removed: T[];
+} {
+  const aByIdentifier = new Map(a.map((item) => [item[identifier], item]));
+
+  const newItems = b.filter((item) => !aByIdentifier.has(item[identifier]));
+
+  const updatedItems = b.filter((item) => {
+    const existingItem = aByIdentifier.get(item[identifier]);
+    return existingItem && comparator(item, existingItem);
+  });
+
+  const bByIdentifier = new Map(b.map((item) => [item[identifier], item]));
+
+  const removedItems = a.filter((item) => !bByIdentifier.has(item[identifier]));
+
+  return {
+    new: newItems,
+    updated: updatedItems,
+    removed: removedItems
+  };
+}
+
+export function isValidEmoji(str: string): boolean {
+  const emojiRegex =
+    /^(\p{Emoji_Presentation}|\p{Emoji}\uFE0F)(\p{Emoji_Modifier_Base}\p{Emoji_Modifier}?\uFE0F?|\p{Emoji_Component}\uFE0F?)?$/u;
+  return emojiRegex.test(str);
 }

@@ -8,16 +8,21 @@ export function Button({
   style,
   type,
   size,
-  disabled,
+  disabled
 }: {
   children: React.ReactNode;
   onClick?: (e: React.MouseEvent<HTMLButtonElement>) => void;
-  style?: "primary" | "danger";
+  style?: "primary" | "secondary" | "danger";
   size?: "large" | "small";
   type?: "submit" | "button" | "reset";
   disabled?: boolean;
 }) {
-  const Btn = style === "danger" ? BtnDanger : BtnBase;
+  const Btn =
+    style === "danger"
+      ? BtnDanger
+      : style === "secondary"
+      ? BtnSecondary
+      : BtnBase;
   return (
     <Btn type={type} size={size} onClick={onClick} disabled={disabled}>
       {children}
@@ -26,8 +31,9 @@ export function Button({
 }
 
 const buttonStyle = `
+  user-select: none;
+  word-break: break-word;
   width: 100%;
-  height: 48px;
   padding: 12px;
   color: var(--bg-dark-primary);
   border: none;
@@ -38,15 +44,22 @@ const buttonStyle = `
   opacity: 1;
   cursor: pointer;
   &:hover {
-    opacity: 0.95;
+    background: var(--accent-darker);
   }
-  &:active {
+  &:active:not([disabled]) {
     opacity: 0.9;
   }
 `;
 
 const BtnBase = styled.button<{ size?: "large" | "small" }>`
   ${buttonStyle}
+  ${({ disabled }) =>
+    disabled === true
+      ? css`
+          cursor: not-allowed;
+          opacity: 0.5;
+        `
+      : css``}
 
   ${({ size }: { size?: "large" | "small" }) =>
     size === undefined || size === "large"
@@ -63,15 +76,38 @@ const BtnBase = styled.button<{ size?: "large" | "small" }>`
 const BtnDanger = styled(BtnBase)`
   color: #fff;
   background: var(--danger);
+  &:hover {
+    background: var(--danger-lite);
+  }
 `;
 
-export const LinkButton = styled(Link)`
+const BtnSecondary = styled(BtnBase)`
+  color: #fff;
+  background: #696969;
+  &:hover {
+    background: #7a7a7a;
+  }
+`;
+
+export const LinkButton = styled(Link)<{ $primary?: boolean }>`
   ${buttonStyle}
-  display: block;
-  width: 100%;
-  text-align: center;
-  text-decoration: none;
-  color: var(--bg-dark-primary) !important;
+
+  ${({ $primary }: { $primary?: boolean }) => css`
+    color: var(--bg-dark-primary) !important;
+    display: block;
+    width: 100%;
+    text-align: center;
+    text-decoration: none;
+
+    ${!$primary &&
+    css`
+      color: #fff !important;
+      background: #696969;
+      &:hover {
+        background: #7a7a7a;
+      }
+    `}
+  `}
 `;
 
 export const CircleButton = styled.button<{
@@ -88,9 +124,18 @@ export const CircleButton = styled.button<{
   margin: 0;
   padding: ${(p) => p.padding}px;
   background: transparent;
+  user-select: none;
+
+  img {
+    -webkit-touch-callout: none;
+    user-select: none;
+    user-drag: none;
+  }
+
   &:hover {
     background: rgba(var(--white-rgb), 0.05);
   }
+
   &:active {
     background: rgba(var(--white-rgb), 0.1);
   }

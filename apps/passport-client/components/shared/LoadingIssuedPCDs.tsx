@@ -1,14 +1,9 @@
 import styled from "styled-components";
-import { appConfig } from "../../src/appConfig";
 import { useLoadedIssuedPCDs } from "../../src/appHooks";
 import { RippleLoader } from "../core/RippleLoader";
 
 export function LoadingIssuedPCDs() {
   const loadedIssuedPCDs = useLoadedIssuedPCDs();
-
-  if (appConfig.isZuzalu) {
-    return null;
-  }
 
   if (loadedIssuedPCDs) {
     return null;
@@ -19,14 +14,14 @@ export function LoadingIssuedPCDs() {
       <LoaderContainer>
         <RippleLoader />
       </LoaderContainer>
-      Loading Issued PCDs
+      Loading Tickets
     </Container>
   );
 }
 
 const Container = styled.div`
-  width: 100%;
-  margin-top: 16px;
+  user-select: none;
+  margin: 12px 9px;
   box-sizing: border-box;
   display: flex;
   justify-content: flex-start;

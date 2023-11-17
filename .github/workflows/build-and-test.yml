@@ -1,12 +1,19 @@
 name: Build and Test
 run-name: Build and Test
-on: [push]
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  merge_group:
 jobs:
   Build-and-Test:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres
+        image: postgres:15
         env:
           POSTGRES_PASSWORD: password
           POSTGRES_USER: admin
@@ -27,7 +34,7 @@ jobs:
         with:
           node-version: 18.x
       - run: "yarn"
-      - run: "yarn build"
-      - run: "yarn typecheck"
-      - run: "yarn lint"
-      - run: "yarn test"
+      - run: "yarn build --verbosity 3"
+      - run: "yarn typecheck --verbosity 3"
+      - run: "yarn lint --verbosity 3"
+      - run: "yarn test --verbosity 3"

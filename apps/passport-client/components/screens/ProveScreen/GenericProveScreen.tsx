@@ -11,13 +11,14 @@ import {
   safeRedirectPending
 } from "../../../src/passportRequest";
 import { err } from "../../../src/util";
-import { Spacer } from "../../core";
+import { H2, Spacer } from "../../core";
+import { MaybeModal } from "../../modals/Modal";
 import { AppContainer } from "../../shared/AppContainer";
 import { AppHeader } from "../../shared/AppHeader";
 import { GenericProveSection } from "./GenericProveSection";
 
 /**
- * Renders a UI in response to a request from the passport to calculate
+ * Renders a UI in response to a request from Zupass to calculate
  * a particular PCD. For arguments which are filled in by the requester
  * of the PCD, displays those hardcoded values. For arguments that the
  * user must fill in, like numbers, strings, and other PCDs, displays
@@ -44,17 +45,27 @@ export function GenericProveScreen({ req }: { req: PCDGetRequest }) {
   }
 
   return (
-    <AppContainer bg="gray">
-      <Spacer h={24} />
-      <AppHeader />
-      <Spacer h={24} />
-      <GenericProveSection
-        initialArgs={req.args}
-        onProve={onProve}
-        pcdType={req.pcdType}
-        options={req.options}
-      />
-      <Spacer h={64} />
-    </AppContainer>
+    <>
+      <MaybeModal fullScreen isProveOrAddScreen={true} />
+      <AppContainer bg="gray">
+        <AppHeader isProveOrAddScreen={true}>
+          <H2
+            style={{
+              flex: 1,
+              textAlign: "center"
+            }}
+          >
+            {req.options?.title ?? "Prove " + req.pcdType}
+          </H2>
+        </AppHeader>
+        <GenericProveSection
+          initialArgs={req.args}
+          onProve={onProve}
+          pcdType={req.pcdType}
+          options={req.options}
+        />
+        <Spacer h={64} />
+      </AppContainer>
+    </>
   );
 }

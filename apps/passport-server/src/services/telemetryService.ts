@@ -2,13 +2,19 @@ import { HoneycombSDK } from "@honeycombio/opentelemetry-node";
 import opentelemetry, { Span, Tracer } from "@opentelemetry/api";
 import { getNodeAutoInstrumentations } from "@opentelemetry/auto-instrumentations-node";
 import { NodeSDK } from "@opentelemetry/sdk-node";
+import { ZUPASS_GITHUB_REPOSITORY_URL } from "@pcd/util";
 import Libhoney from "libhoney";
+import urljoin from "url-join";
 import { ApplicationContext } from "../types";
 import { logger } from "../util/logger";
+import { getCommitMessage } from "../util/util";
 
 // todo get rid of these globals
 let honeyClient: Libhoney | null;
 let tracer: Tracer | null;
+let commitHash: string;
+
+export const DATASET_SLUG = "server-telemetry";
 
 /**
  * Responsible for uploading telemetry data about the performance and usage
@@ -26,20 +32,61 @@ export async function startTelemetry(
 
   honeyClient = context.honeyClient;
   tracer = opentelemetry.trace.getTracer("server-telemetry");
+  commitHash = context.gitCommitHash;
 
   const sdk: NodeSDK = new HoneycombSDK({
     instrumentations: [getNodeAutoInstrumentations()],
-    serviceName: "server-telemetry"
+    serviceName: DATASET_SLUG
   });
 
   logger("[INIT] Starting telemetry");
 
-  return sdk
-    .start()
-    .then(() => {
-      logger("[INIT] Tracing initialized");
-    })
-    .catch((error) => logger("Error initializing tracing", error));
+  try {
+    await sdk.start();
+    logger("[INIT] Tracing initialized");
+    const commitMsgPreview = (await getCommitMessage()).slice(0, 20);
+    writeMarker(
+      commitMsgPreview,
+      MarkerType.Deploy,
+      urljoin(ZUPASS_GITHUB_REPOSITORY_URL, "commit", context.gitCommitHash)
+    );
+  } catch (error) {
+    logger("Error initializing tracing", error);
+  }
+}
+
+export const enum MarkerType {
+  Deploy = "deploy"
+}
+
+export async function writeMarker(
+  name: string,
+  type: string,
+  url?: string
+): Promise<void> {
+  if (!honeyClient) {
+    logger("can't write a marker to honeycomb - missing API keys");
+    return;
+  }
+
+  try {
+    // eslint-disable-next-line no-restricted-globals
+    await fetch(honeyClient.apiHost + `1/markers/${DATASET_SLUG}`, {
+      method: "POST",
+      body: JSON.stringify({
+        message: name,
+        type,
+        url
+      }),
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        "X-Honeycomb-Team": honeyClient.writeKey
+      }
+    });
+  } catch (e) {
+    logger("failed to write marker to honeycomb", e);
+  }
 }
 
 /**
@@ -63,9 +110,14 @@ export async function traced<T>(
   }
 
   return tracer.startActiveSpan(service + "." + method, async (span) => {
+    span.setAttribute("trace_service_name", service);
+
     if (process.env.ROLLBAR_ENV_NAME) {
       span.setAttribute("env_name", process.env.ROLLBAR_ENV_NAME);
     }
+
+    span.setAttribute("commit_hash", commitHash);
+
     try {
       const result = await func(span);
       if (
@@ -90,5 +142,10 @@ export function setError(e: Error | any, span?: Span): void {
 
   if (e instanceof Error && e.stack) {
     span?.setAttribute("error_trace", e.stack);
+
+    if (e.cause instanceof Error && e.cause.stack) {
+      span?.setAttribute("error_cause", e.cause.message);
+      span?.setAttribute("error_cause_stack", e.cause.stack);
+    }
   }
 }

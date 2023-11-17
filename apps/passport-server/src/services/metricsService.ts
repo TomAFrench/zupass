@@ -1,8 +1,9 @@
-import { fetchCommitmentsCount } from "../database/queries/commitments";
+import { getCacheSize } from "../database/queries/cache";
 import { fetchE2EEStorageCount } from "../database/queries/e2ee";
+import { fetchUserCount } from "../database/queries/users";
 import {
   fetchLoggedInZuzaluUserCount,
-  fetchSyncedZuzaluTicketCount,
+  fetchSyncedZuzaluTicketCount
 } from "../database/queries/zuzalu_pretix_tickets/fetchZuzaluUser";
 import { ApplicationContext } from "../types";
 import { logger } from "../util/logger";
@@ -10,10 +11,11 @@ import { RollbarService } from "./rollbarService";
 import { traced } from "./telemetryService";
 
 interface Metrics {
-  commitmentsCount: number;
+  usersCount: number;
   e2eeCount: number;
   loggedInZuzaluUsersCount: number;
   zuzaluTicketsCount: number;
+  cacheSize: number;
 }
 
 export class MetricsService {
@@ -60,10 +62,11 @@ export class MetricsService {
     const db = this.context.dbPool;
 
     const metrics: Metrics = {
-      commitmentsCount: await fetchCommitmentsCount(db),
+      usersCount: await fetchUserCount(db),
       e2eeCount: await fetchE2EEStorageCount(db),
       loggedInZuzaluUsersCount: await fetchLoggedInZuzaluUserCount(db),
       zuzaluTicketsCount: await fetchSyncedZuzaluTicketCount(db),
+      cacheSize: await getCacheSize(db)
     };
 
     return metrics;

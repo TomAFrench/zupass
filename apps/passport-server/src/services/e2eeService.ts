@@ -1,88 +1,208 @@
 import {
-  LoadE2EERequest,
-  LoadE2EEResponse,
-  SaveE2EERequest,
+  ChangeBlobKeyRequest,
+  ChangeBlobKeyResponseValue,
+  DownloadEncryptedStorageResponseValue,
+  UploadEncryptedStorageRequest,
+  UploadEncryptedStorageResponseValue
 } from "@pcd/passport-interface";
 import { Response } from "express";
 import {
+  UpdateEncryptedStorageResult,
   fetchEncryptedStorage,
-  insertEncryptedStorage,
+  rekeyEncryptedStorage,
+  setEncryptedStorage,
+  updateEncryptedStorage
 } from "../database/queries/e2ee";
+import { fetchUserByUUID } from "../database/queries/users";
+import { PCDHTTPError } from "../routing/pcdHttpError";
 import { ApplicationContext } from "../types";
 import { logger } from "../util/logger";
-import { RollbarService } from "./rollbarService";
 
 /**
  * Responsible for storing an retrieving end to end encrypted
  * backups of users' PCDs.
  */
 export class E2EEService {
-  private context: ApplicationContext;
-  private rollbarService: RollbarService | null;
+  private readonly context: ApplicationContext;
 
-  public constructor(
-    context: ApplicationContext,
-    rollbarService: RollbarService | null
-  ) {
+  public constructor(context: ApplicationContext) {
     this.context = context;
-    this.rollbarService = rollbarService;
   }
 
   public async handleLoad(
-    request: LoadE2EERequest,
+    blobKey: string,
+    knownRevision: string | undefined,
     res: Response
   ): Promise<void> {
-    try {
-      logger(`[E2EE] Loading ${request.blobKey}`);
-      const storageModel = await fetchEncryptedStorage(
-        this.context.dbPool,
-        request.blobKey
+    logger(`[E2EE] Loading ${blobKey}`);
+
+    const storageModel = await fetchEncryptedStorage(
+      this.context.dbPool,
+      blobKey
+    );
+
+    if (!storageModel) {
+      throw new PCDHTTPError(
+        404,
+        `can't load e2ee: unknown blob key ${blobKey}`
       );
+    }
 
-      if (!storageModel) {
-        logger(`can't load e2ee: never saved sync key ${request.blobKey}`);
-        res.sendStatus(404);
-        return;
-      }
+    const foundRevision = storageModel.revision.toString();
+    const result: DownloadEncryptedStorageResponseValue = {
+      revision: storageModel.revision.toString()
+    };
+    if (foundRevision !== knownRevision) {
+      result.encryptedBlob = storageModel.encrypted_blob;
+    }
+    res.json(result);
+  }
 
-      const result: LoadE2EEResponse = {
-        encryptedStorage: JSON.parse(storageModel.encrypted_blob),
-      };
-
-      res.json(result);
-    } catch (e) {
-      logger(e);
-      this.rollbarService?.reportError(e);
-      res.sendStatus(500);
+  private checkUpdateResult(
+    blobKey: string,
+    knownRevision: string,
+    updateResult: UpdateEncryptedStorageResult
+  ): string {
+    switch (updateResult.status) {
+      case "updated":
+        return updateResult.revision;
+      case "conflict":
+        throw new PCDHTTPError(
+          409,
+          `can't update e2ee due to conflict: expected revision 
+          ${knownRevision}, found ${updateResult.revision}`
+        );
+      case "missing":
+        throw new PCDHTTPError(
+          404,
+          `can't update e2ee: unknown blob key ${blobKey}`
+        );
     }
   }
 
   public async handleSave(
-    request: SaveE2EERequest,
+    request: UploadEncryptedStorageRequest,
     res: Response
   ): Promise<void> {
-    try {
-      logger(`[E2EE] Saving ${request.blobKey}`);
+    logger(`[E2EE] Saving ${request.blobKey}`);
 
-      await insertEncryptedStorage(
+    if (!request.blobKey || !request.encryptedBlob) {
+      throw new PCDHTTPError(400, "Missing request fields");
+    }
+
+    let resultRevision = undefined;
+    if (request.knownRevision === undefined) {
+      resultRevision = await setEncryptedStorage(
         this.context.dbPool,
         request.blobKey,
         request.encryptedBlob
       );
-
-      res.sendStatus(200);
-    } catch (e) {
-      logger(e);
-      this.rollbarService?.reportError(e);
-      res.sendStatus(500);
+    } else {
+      const updateResult = await updateEncryptedStorage(
+        this.context.dbPool,
+        request.blobKey,
+        request.encryptedBlob,
+        request.knownRevision
+      );
+      resultRevision = this.checkUpdateResult(
+        request.blobKey,
+        request.knownRevision,
+        updateResult
+      );
     }
+
+    res.json({
+      revision: resultRevision
+    } satisfies UploadEncryptedStorageResponseValue);
+  }
+
+  private setRekeyResult(
+    blobKey: string,
+    knownRevision: string | undefined,
+    updateResult: UpdateEncryptedStorageResult,
+    res: Response
+  ): void {
+    switch (updateResult.status) {
+      case "updated":
+        res.json({
+          revision: updateResult.revision
+        } as ChangeBlobKeyResponseValue);
+        break;
+      case "conflict":
+        res.status(409).json({
+          error: {
+            name: "Conflict",
+            detailedMessage: `Can't rekey e2ee due to conflict: expected 
+              revision ${knownRevision}, found ${updateResult.revision}`
+          }
+        });
+        break;
+      case "missing":
+        res.status(401).json({ error: { name: "PasswordIncorrect" } });
+        break;
+    }
+  }
+
+  public async handleChangeBlobKey(
+    request: ChangeBlobKeyRequest,
+    res: Response
+  ): Promise<void> {
+    logger(
+      `[E2EE] Rekeying ${request.oldBlobKey} to ${request.newBlobKey} for ${request.uuid}`
+    );
+
+    if (
+      !request.newBlobKey ||
+      !request.oldBlobKey ||
+      !request.newSalt ||
+      !request.uuid ||
+      !request.encryptedBlob
+    ) {
+      throw new PCDHTTPError(400, "Missing request fields");
+    }
+
+    // Validate user.  User must exist, and new salt must be different.
+    const user = await fetchUserByUUID(this.context.dbPool, request.uuid);
+    if (!user) {
+      // @todo: make {@link PCDHTTPError} be able to return JSON, not just plain text
+      res.status(404).json({
+        error: {
+          name: "UserNotFound",
+          detailedMessage: "User with this uuid was not found"
+        }
+      });
+      return;
+    }
+
+    const { salt: oldSalt } = user;
+    if (oldSalt === request.newSalt) {
+      res.status(400).json({
+        error: {
+          name: "RequiresNewSalt",
+          detailedMessage: "Updated salt must be different than existing salt"
+        }
+      });
+      return;
+    }
+
+    const rekeyResult = await rekeyEncryptedStorage(
+      this.context.dbPool,
+      request.oldBlobKey,
+      request.newBlobKey,
+      request.uuid,
+      request.newSalt,
+      request.encryptedBlob,
+      request.knownRevision
+    );
+    this.setRekeyResult(
+      request.oldBlobKey,
+      request.knownRevision,
+      rekeyResult,
+      res
+    );
   }
 }
 
-export function startE2EEService(
-  context: ApplicationContext,
-  rollbarService: RollbarService | null
-): E2EEService {
-  const e2eeService = new E2EEService(context, rollbarService);
-  return e2eeService;
+export function startE2EEService(context: ApplicationContext): E2EEService {
+  return new E2EEService(context);
 }

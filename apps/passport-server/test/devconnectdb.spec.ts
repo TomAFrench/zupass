@@ -4,17 +4,18 @@ import { step } from "mocha-steps";
 import { Pool } from "postgres-pool";
 import { v4 as uuid } from "uuid";
 import {
-  DevconnectPretixTicket,
-  DevconnectPretixTicketDBWithEmailAndItem
+  DevconnectPretixTicketDBWithEmailAndItem,
+  DevconnectPretixTicketWithCheckin
 } from "../src/database/models";
 import { getDB } from "../src/database/postgresPool";
 import {
-  fetchDevconnectDeviceLoginTicket,
+  fetchDevconnectPretixTicketByTicketId,
   fetchDevconnectPretixTicketsByEmail,
   fetchDevconnectPretixTicketsByEvent,
   fetchDevconnectSuperusers,
   fetchDevconnectSuperusersForEmail,
-  fetchDevconnectSuperusersForEvent
+  fetchDevconnectSuperusersForEvent,
+  fetchDevconnectTicketsAwaitingSync
 } from "../src/database/queries/devconnect_pretix_tickets/fetchDevconnectPretixTicket";
 import { insertDevconnectPretixTicket } from "../src/database/queries/devconnect_pretix_tickets/insertDevconnectPretixTicket";
 import { softDeleteDevconnectPretixTicket } from "../src/database/queries/devconnect_pretix_tickets/softDeleteDevconnectPretixTicket";
@@ -33,15 +34,15 @@ import {
   insertPretixEventConfig,
   insertPretixOrganizerConfig
 } from "../src/database/queries/pretix_config/insertConfiguration";
-import { overrideEnvironment, pcdpassTestingEnv } from "./util/env";
+import { overrideEnvironment, testingEnv } from "./util/env";
 
-interface ITestOrganizer {
+export interface ITestOrganizer {
   dbId: string;
   token: string;
   organizerUrl: string;
 }
 
-interface ITestEvent {
+export interface ITestEvent {
   dbEventConfigId: string;
   dbEventInfoId: string;
   dbOrganizerId: string;
@@ -59,9 +60,11 @@ interface ITestItem {
   _eventIdx: number;
 }
 
-interface ITestTicket extends DevconnectPretixTicket {
+interface ITestTicket extends DevconnectPretixTicketWithCheckin {
   _itemIdx: number;
 }
+
+const DEFAULT_CHECKIN_LIST_ID = "1";
 
 describe("database reads and writes for devconnect ticket features", function () {
   this.timeout(15_000);
@@ -69,7 +72,7 @@ describe("database reads and writes for devconnect ticket features", function ()
   let db: Pool;
 
   this.beforeAll(async () => {
-    await overrideEnvironment(pcdpassTestingEnv);
+    await overrideEnvironment(testingEnv);
     db = await getDB();
   });
 
@@ -177,41 +180,57 @@ describe("database reads and writes for devconnect ticket features", function ()
       full_name: "UserFirst UserLast",
       email: "user-one@test.com",
       devconnect_pretix_items_info_id: "",
+      pretix_events_config_id: "",
       is_consumed: false,
       is_deleted: false,
       position_id: "1000",
       _itemIdx: 0,
-      secret: "a1b2c3d4"
+      secret: "a1b2c3d4",
+      checker: "",
+      zupass_checkin_timestamp: null,
+      pretix_checkin_timestamp: null
     },
     {
       full_name: "Super User1",
       email: "user-two@test.com",
       devconnect_pretix_items_info_id: "",
+      pretix_events_config_id: "",
       is_consumed: false,
       is_deleted: false,
       position_id: "1001",
       _itemIdx: 3,
-      secret: "qwertyuiop"
+      secret: "qwertyuiop",
+      checker: "",
+      zupass_checkin_timestamp: null,
+      pretix_checkin_timestamp: null
     },
     {
       full_name: "ThirdParty Attendee",
       email: "thirdparty-attendee@test.com",
       devconnect_pretix_items_info_id: "",
+      pretix_events_config_id: "",
       is_consumed: false,
       is_deleted: false,
       position_id: "1002",
       _itemIdx: 4,
-      secret: "0xdeadbeef"
+      secret: "0xdeadbeef",
+      checker: "",
+      zupass_checkin_timestamp: null,
+      pretix_checkin_timestamp: null
     },
     {
       full_name: "ThirdParty SuperUser",
       email: "thirdparty-attendee@test.com",
       devconnect_pretix_items_info_id: "",
+      pretix_events_config_id: "",
       is_consumed: false,
       is_deleted: false,
       position_id: "1003",
       _itemIdx: 5,
-      secret: "asdfghjkl"
+      secret: "asdfghjkl",
+      checker: "",
+      zupass_checkin_timestamp: null,
+      pretix_checkin_timestamp: null
     }
   ];
 
@@ -262,7 +281,8 @@ describe("database reads and writes for devconnect ticket features", function ()
       const dbEventInfoId = await insertPretixEventsInfo(
         db,
         event.eventName,
-        event.dbEventConfigId
+        event.dbEventConfigId,
+        DEFAULT_CHECKIN_LIST_ID
       );
 
       event.dbEventInfoId = dbEventInfoId;
@@ -332,6 +352,8 @@ describe("database reads and writes for devconnect ticket features", function ()
     for (const ticket of testTickets) {
       const item = testItems[ticket._itemIdx];
       ticket.devconnect_pretix_items_info_id = item.dbId;
+      ticket.pretix_events_config_id =
+        testEvents[testItems[ticket._itemIdx]._eventIdx].dbEventConfigId;
 
       const insertedTicket = await insertDevconnectPretixTicket(db, ticket);
       expect(insertedTicket.devconnect_pretix_items_info_id).to.eq(
@@ -371,7 +393,7 @@ describe("database reads and writes for devconnect ticket features", function ()
       testTickets[0].email
     );
 
-    const updatedTicket: DevconnectPretixTicket = {
+    const updatedTicket: DevconnectPretixTicketWithCheckin = {
       ...existingTicket[0],
       full_name: "New Fullname"
     };
@@ -417,6 +439,33 @@ describe("database reads and writes for devconnect ticket features", function ()
     const firstTicketAfterConsumption = afterConsumptionTickets[0];
     expect(firstTicketAfterConsumption.is_consumed).to.eq(true);
   });
+
+  step(
+    "should be able to fetch tickets awaiting push synchronization",
+    async function () {
+      // In the previous test, we consumed this ticket
+      const existingTicket = await fetchDevconnectPretixTicketsByEmail(
+        db,
+        testTickets[0].email
+      );
+
+      const consumedTicket = await fetchDevconnectPretixTicketByTicketId(
+        db,
+        existingTicket[0].id
+      );
+      expect(consumedTicket?.is_consumed).to.eq(true);
+
+      const ticketsAwaitingSync = await fetchDevconnectTicketsAwaitingSync(
+        db,
+        testOrganizers[0].organizerUrl
+      );
+      expect(ticketsAwaitingSync.length).to.eq(1);
+      // ticketsAwaitingSync[0] also includes the checkin_list property,
+      // so we check with deep.contain rather than deep.eq, which would
+      // fail due to ticketsAwaitingSync[0] having one extra property.
+      expect(ticketsAwaitingSync[0]).to.deep.contain(consumedTicket);
+    }
+  );
 
   step("should be able to soft-delete and restore a ticket", async function () {
     const existingTicket = await fetchDevconnectPretixTicketsByEmail(
@@ -485,31 +534,6 @@ describe("database reads and writes for devconnect ticket features", function ()
 
     expect(actualEmailSet).to.deep.eq(expectedEmailSet);
   });
-
-  step("fetching device logins should work", async function () {
-    const ticket = testTickets[1];
-    const fetchedDeviceLogin = await fetchDevconnectDeviceLoginTicket(
-      db,
-      ticket.email,
-      ticket.secret
-    );
-
-    expect(fetchedDeviceLogin).to.have.property("email", ticket.email);
-  });
-
-  step(
-    "fetching device logins should fail for non-superusers",
-    async function () {
-      const ticket = testTickets[0];
-      const fetchedDeviceLogin = await fetchDevconnectDeviceLoginTicket(
-        db,
-        ticket.email,
-        ticket.secret
-      );
-
-      expect(fetchedDeviceLogin).to.be.undefined;
-    }
-  );
 
   step("fetching all superusers should work", async function () {
     const dbSuperUsers = await fetchDevconnectSuperusers(db);

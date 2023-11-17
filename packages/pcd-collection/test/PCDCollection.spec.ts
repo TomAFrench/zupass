@@ -58,54 +58,39 @@ describe("PCDCollection", async function () {
     const folder2 = "FOLDER_2";
     const folder3 = "FOLDER_3";
 
-    collection.setFolder(pcdList[0].id, folder1);
-    collection.setFolder(pcdList[3].id, folder1);
-    expect(collection.getAllFolderNames()).to.deep.eq([folder1]);
+    collection.setPCDFolder(pcdList[0].id, folder1);
+    collection.setPCDFolder(pcdList[3].id, folder1);
+    collection.setPCDFolder(pcdList[1].id, folder2);
+    collection.setPCDFolder(pcdList[4].id, folder2);
+    collection.setPCDFolder(pcdList[2].id, folder3);
+    collection.setPCDFolder(pcdList[5].id, folder3);
 
-    collection.setFolder(pcdList[1].id, folder2);
-    collection.setFolder(pcdList[4].id, folder2);
-    expect(collection.getAllFolderNames()).to.deep.eq([folder1, folder2]);
-
-    collection.setFolder(pcdList[2].id, folder3);
-    collection.setFolder(pcdList[5].id, folder3);
-    expect(collection.getAllFolderNames()).to.deep.eq([
-      folder1,
-      folder2,
-      folder3
-    ]);
-
-    expect(collection.getFolder(pcdList[0].id)).to.eq(folder1);
-    expect(collection.getFolder(pcdList[1].id)).to.eq(folder2);
-    expect(collection.getFolder(pcdList[2].id)).to.eq(folder3);
-    expect(collection.getFolder(pcdList[3].id)).to.eq(folder1);
-    expect(collection.getFolder(pcdList[4].id)).to.eq(folder2);
-    expect(collection.getFolder(pcdList[5].id)).to.eq(folder3);
+    expect(collection.getFolderOfPCD(pcdList[0].id)).to.eq(folder1);
+    expect(collection.getFolderOfPCD(pcdList[1].id)).to.eq(folder2);
+    expect(collection.getFolderOfPCD(pcdList[2].id)).to.eq(folder3);
+    expect(collection.getFolderOfPCD(pcdList[3].id)).to.eq(folder1);
+    expect(collection.getFolderOfPCD(pcdList[4].id)).to.eq(folder2);
+    expect(collection.getFolderOfPCD(pcdList[5].id)).to.eq(folder3);
 
     const serialized = await collection.serializeCollection();
     const deserialized = await PCDCollection.deserialize(packages, serialized);
 
-    expect(deserialized.getFolder(pcdList[0].id)).to.eq(folder1);
-    expect(deserialized.getFolder(pcdList[1].id)).to.eq(folder2);
-    expect(deserialized.getFolder(pcdList[2].id)).to.eq(folder3);
-    expect(deserialized.getFolder(pcdList[3].id)).to.eq(folder1);
-    expect(deserialized.getFolder(pcdList[4].id)).to.eq(folder2);
-    expect(deserialized.getFolder(pcdList[5].id)).to.eq(folder3);
+    expect(deserialized.getFolderOfPCD(pcdList[0].id)).to.eq(folder1);
+    expect(deserialized.getFolderOfPCD(pcdList[1].id)).to.eq(folder2);
+    expect(deserialized.getFolderOfPCD(pcdList[2].id)).to.eq(folder3);
+    expect(deserialized.getFolderOfPCD(pcdList[3].id)).to.eq(folder1);
+    expect(deserialized.getFolderOfPCD(pcdList[4].id)).to.eq(folder2);
+    expect(deserialized.getFolderOfPCD(pcdList[5].id)).to.eq(folder3);
 
-    expect(deserialized.getAllFolderNames()).to.deep.eq([
-      folder1,
-      folder2,
-      folder3
-    ]);
-
-    expect(deserialized.getAllInFolder(folder1)).to.deep.eq([
+    expect(deserialized.getAllPCDsInFolder(folder1)).to.deep.eq([
       pcdList[0],
       pcdList[3]
     ]);
-    expect(deserialized.getAllInFolder(folder2)).to.deep.eq([
+    expect(deserialized.getAllPCDsInFolder(folder2)).to.deep.eq([
       pcdList[1],
       pcdList[4]
     ]);
-    expect(deserialized.getAllInFolder(folder3)).to.deep.eq([
+    expect(deserialized.getAllPCDsInFolder(folder3)).to.deep.eq([
       pcdList[2],
       pcdList[5]
     ]);
@@ -118,8 +103,7 @@ describe("PCDCollection", async function () {
       pcdList[5]
     ]);
 
-    deserialized.removeAllInFolder(folder1);
-    expect(deserialized.getAllFolderNames()).to.deep.eq([folder2, folder3]);
+    deserialized.removeAllPCDsInFolder(folder1);
     expect(deserialized.getAll().length).to.eq(4);
 
     expect(deserialized.getAll()).to.deep.contain(pcdList[1]);
@@ -173,7 +157,7 @@ describe("PCDCollection", async function () {
     const collection = new PCDCollection(packages);
     await collection.deserializeAllAndAdd(serializedPCDs);
 
-    const hash = collection.getHash();
+    const hash = await collection.getHash();
 
     const replacement = await newPCD(pcdList[0].id);
 
@@ -185,7 +169,7 @@ describe("PCDCollection", async function () {
       pcdList[2]
     ]);
 
-    const hashAfterEdit = collection.getHash();
+    const hashAfterEdit = await collection.getHash();
     expect(hashAfterEdit).to.not.eq(hash);
   });
 
@@ -216,12 +200,12 @@ describe("PCDCollection", async function () {
 
     const collection = new PCDCollection(packages);
     await collection.deserializeAllAndAdd(serializedPCDs);
-    const hash = collection.getHash();
+    const hash = await collection.getHash();
 
     collection.remove(pcdList[0].id);
 
     expect(collection.getAll()).to.deep.eq([pcdList[1], pcdList[2]]);
-    const hashAfterEdit = collection.getHash();
+    const hashAfterEdit = await collection.getHash();
 
     expect(hashAfterEdit).to.not.eq(hash);
   });
@@ -249,9 +233,41 @@ describe("PCDCollection", async function () {
     expect(thirdHash).to.eq(firstHash);
 
     const fourthHash = await waitForNewHash(collection, () => {
-      collection.setFolder(pcdList[0].id, "folder");
+      collection.setPCDFolder(pcdList[0].id, "folder");
     });
     expect(fourthHash).to.not.eq(firstHash);
+  });
+
+  it("should maintain hash across serialization", async function () {
+    const pcdList = await Promise.all([
+      newPCD(),
+      newPCD(),
+      newPCD(),
+      newPCD(),
+      newPCD()
+    ]);
+
+    // Insertion order intentionally doesn't match order of IDs or folders.
+    const collection = new PCDCollection(packages);
+    collection.add(pcdList[0]);
+    collection.setPCDFolder(pcdList[0].id, "3");
+    collection.add(pcdList[1]);
+    collection.setPCDFolder(pcdList[1].id, "1");
+    collection.add(pcdList[2]);
+    collection.setPCDFolder(pcdList[2].id, "AAAAA");
+    collection.add(pcdList[3]);
+    collection.setPCDFolder(pcdList[3].id, "AAAAA/BBBB");
+    collection.add(pcdList[4]);
+    // No folder for pcdList[4]
+
+    const firstHash = await collection.getHash();
+
+    const serializedCollection = await collection.serializeCollection();
+    const deserializedCollection = await PCDCollection.deserialize(
+      packages,
+      serializedCollection
+    );
+    expect(await deserializedCollection.getHash()).to.eq(firstHash);
   });
 });
 

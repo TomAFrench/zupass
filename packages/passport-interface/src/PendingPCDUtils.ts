@@ -1,7 +1,7 @@
 import { sha256 } from "js-sha256";
-import { ProveRequest } from "./RequestTypes";
+import { ServerProofRequest } from "./RequestTypes";
 
-export function hashProveRequest(req: ProveRequest): string {
+export function hashProveRequest(req: ServerProofRequest): string {
   const reqString = JSON.stringify(req);
   return sha256(reqString);
 }
@@ -30,13 +30,13 @@ export enum PendingPCDStatus {
   PROVING = "proving",
   COMPLETE = "complete",
   ERROR = "error",
-  NONE = "none",
+  NONE = "none"
 }
 
 export function isSettledPendingPCDStatus(status: PendingPCDStatus) {
   return [
     PendingPCDStatus.ERROR,
     PendingPCDStatus.COMPLETE,
-    PendingPCDStatus.NONE,
+    PendingPCDStatus.NONE
   ].includes(status);
 }

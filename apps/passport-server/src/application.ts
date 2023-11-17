@@ -1,18 +1,24 @@
-import * as path from "path";
-import {
-  DevconnectPretixAPI,
-  getDevconnectPretixAPI
-} from "./apis/devconnect/devconnectPretixAPI";
-import { IEmailAPI, mailgunSendEmail } from "./apis/emailAPI";
-import { getHoneycombAPI } from "./apis/honeycombAPI";
-import { getPretixAPI, PretixAPI } from "./apis/pretixAPI";
-import { getDB } from "./database/postgresPool";
-import { startServer } from "./routing/server";
-import { startServices, stopServices } from "./services";
-import { APIs, ApplicationContext, PCDPass } from "./types";
-import { logger } from "./util/logger";
-
+import { ZUPASS_GITHUB_REPOSITORY_URL } from "@pcd/util";
+import sendgrid from "@sendgrid/mail";
 import process from "node:process";
+import * as path from "path";
+import urljoin from "url-join";
+import { getDevconnectPretixAPI } from "./apis/devconnect/devconnectPretixAPI";
+import { IEmailAPI, sendgridSendEmail } from "./apis/emailAPI";
+import { getHoneycombAPI } from "./apis/honeycombAPI";
+import {
+  IZuconnectTripshaAPI,
+  getZuconnectTripshaAPI
+} from "./apis/zuconnect/zuconnectTripshaAPI";
+import { ZuzaluPretixAPI, getZuzaluPretixAPI } from "./apis/zuzaluPretixAPI";
+import { getDB } from "./database/postgresPool";
+import { startHttpServer, stopHttpServer } from "./routing/server";
+import { startServices, stopServices } from "./services";
+import { DevconnectPretixAPIFactory } from "./services/devconnectPretixSyncService";
+import { APIs, ApplicationContext, Zupass } from "./types";
+import { logger } from "./util/logger";
+import { trapSigTerm } from "./util/terminate";
+import { getCommitHash, getCommitMessage } from "./util/util";
 
 process.on("unhandledRejection", (reason) => {
   if (reason instanceof Error) {
@@ -28,40 +34,50 @@ process.on("unhandledRejection", (reason) => {
  */
 export async function startApplication(
   apiOverrides?: Partial<APIs>
-): Promise<PCDPass> {
+): Promise<Zupass> {
   const dbPool = await getDB();
   const honeyClient = getHoneycombAPI();
 
   const context: ApplicationContext = {
     dbPool,
     honeyClient,
-    isZuzalu: process.env.IS_ZUZALU === "true" ? true : false,
     resourcesDir: path.join(process.cwd(), "resources"),
-    publicResourcesDir: path.join(process.cwd(), "public")
+    publicResourcesDir: path.join(process.cwd(), "public"),
+    gitCommitHash: await getCommitHash()
   };
 
   const apis = await getOverridenApis(context, apiOverrides);
   const services = await startServices(context, apis);
-  const expressServer = await startServer(context, services);
+  const expressServer = await startHttpServer(context, services);
 
+  const commitMessage = await getCommitMessage();
+  const discordAlertMessage = `Server \`${
+    process.env.ROLLBAR_ENV_NAME
+  }\` started at [\`${context.gitCommitHash.substring(0, 8)}\`](<${urljoin(
+    ZUPASS_GITHUB_REPOSITORY_URL,
+    "commit",
+    context.gitCommitHash
+  )}>)\n\`\`\`\n${commitMessage}\n\`\`\``;
   services.rollbarService?.log("Server started.");
-  services.discordService?.sendAlert(
-    `Server \`${process.env.ROLLBAR_ENV_NAME}\` started`
-  );
+  services.discordService?.sendAlert(discordAlertMessage);
 
-  return {
+  const zupass: Zupass = {
     context,
     services,
     apis,
     expressContext: expressServer
   };
+
+  trapSigTerm(zupass);
+
+  return zupass;
 }
 
-export async function stopApplication(app?: PCDPass): Promise<void> {
+export async function stopApplication(app?: Zupass): Promise<void> {
   if (!app) return;
   await stopServices(app.services);
+  await stopHttpServer(app);
   await app.context.dbPool.end();
-  app.expressContext.server.close();
 }
 
 async function getOverridenApis(
@@ -74,37 +90,46 @@ async function getOverridenApis(
     logger("[INIT] overriding email client");
     emailAPI = apiOverrides.emailAPI;
   } else {
-    if (process.env.MAILGUN_API_KEY === undefined) {
-      logger("[EMAIL] Missing environment variable: MAILGUN_API_KEY");
+    if (process.env.SENDGRID_API_KEY === undefined) {
+      logger("[EMAIL] Missing environment variable: SENDGRID_API_KEY");
       emailAPI = null;
     } else {
-      emailAPI = { send: mailgunSendEmail };
+      sendgrid.setApiKey(process.env.SENDGRID_API_KEY);
+      emailAPI = { send: sendgridSendEmail };
     }
   }
 
-  let pretixAPI: PretixAPI | null = null;
+  let zuzaluPretixAPI: ZuzaluPretixAPI | null = null;
 
-  if (context.isZuzalu) {
-    if (apiOverrides?.pretixAPI) {
-      logger("[INIT] overriding pretix api");
-      pretixAPI = apiOverrides.pretixAPI;
-    } else {
-      pretixAPI = getPretixAPI();
-    }
-  }
-
-  let devconnectPretixAPI: DevconnectPretixAPI | null = null;
-
-  if (apiOverrides?.devconnectPretixAPI) {
-    logger("[INIT] overriding devconnect pretix api");
-    devconnectPretixAPI = apiOverrides.devconnectPretixAPI;
+  if (apiOverrides?.zuzaluPretixAPI) {
+    logger("[INIT] overriding pretix api");
+    zuzaluPretixAPI = apiOverrides.zuzaluPretixAPI;
   } else {
-    devconnectPretixAPI = await getDevconnectPretixAPI();
+    zuzaluPretixAPI = getZuzaluPretixAPI();
+  }
+
+  let devconnectPretixAPIFactory: DevconnectPretixAPIFactory | null = null;
+
+  if (apiOverrides?.devconnectPretixAPIFactory) {
+    logger("[INIT] overriding devconnect pretix api factory");
+    devconnectPretixAPIFactory = apiOverrides.devconnectPretixAPIFactory;
+  } else {
+    devconnectPretixAPIFactory = getDevconnectPretixAPI;
+  }
+
+  let zuconnectTripshaAPI: IZuconnectTripshaAPI | null = null;
+
+  if (apiOverrides?.zuconnectTripshaAPI) {
+    logger("[INIT] overriding Zuconnect Tripsha API");
+    zuconnectTripshaAPI = apiOverrides.zuconnectTripshaAPI;
+  } else {
+    zuconnectTripshaAPI = getZuconnectTripshaAPI();
   }
 
   return {
     emailAPI,
-    pretixAPI,
-    devconnectPretixAPI
+    zuzaluPretixAPI,
+    devconnectPretixAPIFactory,
+    zuconnectTripshaAPI
   };
 }
